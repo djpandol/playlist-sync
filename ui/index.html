@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Playlist Sync</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#0b0b0c;--line:#2a2a2d;--txt:#d6d6d6;--dim:#8a8a8f;--ok:#3fb950;--warn:#e3a008;--bad:#e5484d;--info:#4a9eff}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font:12px/1.35 -apple-system,"Apple SD Gothic Neo","Malgun Gothic",Segoe UI,Helvetica,Arial,sans-serif;overflow:hidden}
+button,select{font:inherit;color:var(--txt);background:#26262a;border:1px solid #3a3a40;border-radius:4px;padding:4px 10px;cursor:pointer}
+button:hover:not(:disabled){background:#33333a}
+button:disabled{opacity:.4;cursor:default}
+button.primary{background:#1e5fa8;border-color:#2b78cc;color:#fff}
+button.primary:hover:not(:disabled){background:#2570c4}
+#app{display:grid;grid-template-rows:38px 1fr 230px;height:100%}
+header{display:flex;align-items:center;gap:12px;padding:0 12px;background:#141416;border-bottom:1px solid var(--line)}
+header h1{font-size:13px;margin:0;font-weight:600;letter-spacing:.3px}
+header .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim)}
+.dot{width:8px;height:8px;border-radius:50%;background:#555;display:inline-block;flex:none}
+.dot.same{background:var(--ok)}.dot.differs,.dot.both_changed{background:var(--bad)}
+.dot.serato_changed,.dot.rekordbox_changed,.dot.new_serato,.dot.new_rekordbox{background:var(--warn)}
+.dot.deleted_in_serato,.dot.deleted_in_rekordbox,.dot.blocked{background:#777}
+.dot.run{background:var(--bad)}.dot.idle{background:var(--ok)}
+main{display:grid;grid-template-columns:1fr 54px 1fr;min-height:0}
+.mid{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:#101012;border-left:1px solid var(--line);border-right:1px solid var(--line)}
+.mid button{width:38px;padding:6px 0;font-size:16px}
+.pane{display:grid;grid-template-columns:200px 1fr;grid-template-rows:26px 1fr 22px;min-width:0;min-height:0}
+.pane .ph{grid-column:1/3;display:flex;align-items:center;gap:8px;padding:0 10px;font-weight:600;font-size:11px;letter-spacing:.5px;text-transform:uppercase}
+.pane .pf{grid-column:1/3;display:flex;align-items:center;padding:0 10px;font-size:11px;gap:14px}
+.tree{overflow:auto;padding:4px 0;user-select:none}
+.grid{overflow:auto;min-width:0;min-height:0;position:relative}
+.node{display:flex;align-items:center;gap:6px;height:22px;padding-right:8px;white-space:nowrap;cursor:default}
+.node .ic{width:14px;text-align:center;flex:none;font-size:11px}
+.node .nm{overflow:hidden;text-overflow:ellipsis;flex:1}
+.node .ct{color:var(--dim);font-size:10px}
+.msg{padding:14px;color:var(--dim)}
+table{border-collapse:collapse;width:100%;table-layout:fixed}
+th{position:sticky;top:0;text-align:left;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.4px;padding:0 6px;height:22px;white-space:nowrap;overflow:hidden}
+td{padding:0 6px;height:22px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td.n,th.n{width:34px;text-align:right}td.bpm,th.bpm{width:44px;text-align:right}td.key,th.key{width:46px}td.len,th.len{width:48px;text-align:right}
+td.ar,th.ar{width:26%}td.cm,th.cm{width:20%}
+tr.miss td{opacity:.5;text-decoration:line-through}
+/* ---- Serato look ---- */
+.serato{background:#111}
+.serato .ph{background:#1a1a1a;color:#c9c9c9;border-bottom:1px solid #000}
+.serato .tree{background:#202020;border-right:1px solid #000}
+.serato .node.sel{background:#1e4a77;color:#fff}
+.serato .node .ic{color:#f58b1f}
+.serato th{background:#262626;color:#9a9a9a;border-bottom:1px solid #000;border-right:1px solid #111}
+.serato tbody tr{background:#161616}.serato tbody tr:nth-child(even){background:#1b1b1b}
+.serato td{color:#d8d8d8;border-right:1px solid #141414}
+.serato td.ti{color:#6fb3ff}
+.serato tr.sel td{background:#444}
+.serato .pf{background:#1a1a1a;border-top:1px solid #000;color:#9a9a9a}
+/* ---- rekordbox look ---- */
+.rb{background:#0e0e10}
+.rb .ph{background:#232323;color:#bdbdbd;border-bottom:1px solid #000}
+.rb .tree{background:#1e1e1e;border-right:1px solid #000}
+.rb .node.sel{background:#2d6cdf;color:#fff}
+.rb .node .ic{color:#9aa3ad}
+.rb th{background:#1b1b19;color:#8d8d8d;border-bottom:1px solid #333;border-right:1px solid #2a2a2a;text-transform:none;font-size:11px;font-weight:400}
+.rb tbody tr{background:#0e0e10}.rb tbody tr:nth-child(even){background:#131316}
+.rb td{color:#cfcfcf;border-bottom:1px solid #18181b}
+.rb tr.sel td{background:#243b66}
+.rb .pf{background:#000;border-top:1px solid #222;color:#8d8d8d}
+td.mm{box-shadow:inset 3px 0 0 var(--warn)}
+.k{font-weight:600}
+/* ---- plan ---- */
+.plan{display:grid;grid-template-rows:30px 1fr 40px;border-top:1px solid var(--line);background:#141416;min-height:0}
+.plan .tabs{display:flex;align-items:flex-end;gap:2px;padding:0 10px;border-bottom:1px solid var(--line)}
+.tab{padding:6px 14px;border:1px solid transparent;border-bottom:none;border-radius:4px 4px 0 0;cursor:pointer;color:var(--dim)}
+.tab.on{background:#1c1c20;border-color:var(--line);color:var(--txt)}
+.plan .body{overflow:auto;background:#1c1c20}
+.plan table th{background:#222226;color:#999;border-bottom:1px solid var(--line);font-size:10px}
+.plan td{border-bottom:1px solid #26262a}
+.plan td.c1,.plan th.c1{width:30px;text-align:center}.plan td.num,.plan th.num{width:70px;text-align:right}.plan td.st,.plan th.st{width:170px}.plan td.ac,.plan th.ac{width:200px}
+.plan select{width:100%;padding:1px 4px}
+.plan tr.sel td{background:#26303f}
+.plan .foot{display:flex;align-items:center;gap:10px;padding:0 12px;border-top:1px solid var(--line)}
+.plan .foot .sp{flex:1}
+pre.log{margin:0;padding:10px;font:11px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;color:#bbb}
+.err{color:var(--bad)}.okc{color:var(--ok)}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:10}
+#modal .box{background:#1d1d21;border:1px solid #3a3a40;border-radius:8px;padding:18px;width:560px;max-width:92vw;max-height:80vh;display:flex;flex-direction:column;gap:12px}
+#modal h3{margin:0;font-size:14px}
+#modal .mb{overflow:auto;white-space:pre-wrap;line-height:1.5}
+#modal .btns{display:flex;gap:8px;justify-content:flex-end}
+#modal input{width:100%;background:#111;border:1px solid #3a3a40;color:var(--txt);padding:5px 8px;border-radius:4px;font:inherit}
+#modal label{display:block;margin-top:6px;color:var(--dim)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Playlist Sync <span class="pill" id="ver"></span></h1>
+    <span class="pill"><i class="dot" id="d-s"></i><span id="t-s">Serato</span></span>
+    <span class="pill"><i class="dot" id="d-r"></i><span id="t-r">rekordbox</span></span>
+    <span class="sp"></span>
+    <span class="pill" id="legend"></span>
+    <button id="b-lang">EN</button>
+    <button id="b-set"></button>
+    <button id="b-ref"></button>
+  </header>
+  <main>
+    <section class="pane serato" id="p-s">
+      <div class="ph"><span style="color:#f58b1f">&#9632;</span> Serato DJ Pro</div>
+      <div class="tree" id="tr-s"></div><div class="grid" id="gr-s"></div>
+      <div class="pf" id="pf-s"></div>
+    </section>
+    <div class="mid">
+      <button id="b-r" title="">&rarr;</button>
+      <button id="b-l" title="">&larr;</button>
+    </div>
+    <section class="pane rb" id="p-r">
+      <div class="ph"><span style="color:#2d6cdf">&#9679;</span> rekordbox</div>
+      <div class="tree" id="tr-r"></div><div class="grid" id="gr-r"></div>
+      <div class="pf" id="pf-r"></div>
+    </section>
+  </main>
+  <section class="plan">
+    <div class="tabs"><div class="tab on" id="tab-plan"></div><div class="tab" id="tab-log"></div></div>
+    <div class="body" id="body"></div>
+    <div class="foot"><span id="sum"></span><span class="sp"></span>
+      <button id="b-all"></button><button id="b-none"></button><button class="primary" id="b-run"></button></div>
+  </section>
+</div>
+<div id="modal"><div class="box"><h3 id="m-t"></h3><div class="mb" id="m-b"></div><div class="btns" id="m-x"></div></div></div>
+<script>
+"use strict";
+const TOKEN="__TOKEN__", VERSION="__VERSION__";
+const I18N={
+ko:{refresh:"새로고침",settings:"설정",sync:"선택 항목 동기화",all:"변경 항목 모두 선택",none:"선택 해제",plan:"동기화 계획",log:"결과",
+ pl:"플레이리스트",cs:"Serato",cr:"rekordbox",status:"상태",action:"동작",note:"설명",
+ st:{same:"동일",differs:"서로 다름",serato_changed:"Serato 변경",rekordbox_changed:"rekordbox 변경",both_changed:"양쪽 변경",new_serato:"Serato에만 있음",new_rekordbox:"rekordbox에만 있음",deleted_in_serato:"Serato에서 삭제됨?",deleted_in_rekordbox:"rekordbox에서 삭제됨?",blocked:"동기화 불가"},
+ ac:{skip:"건너뜀",to_rekordbox:"Serato → rekordbox",to_serato:"rekordbox → Serato",delete_serato:"Serato에서 삭제",delete_rekordbox:"rekordbox에서 삭제"},
+ run:"실행 중",idle:"종료됨",empty:"항목이 없습니다",selpl:"플레이리스트를 선택하세요",tracks:"곡",
+ toR:"선택한 플레이리스트를 Serato → rekordbox 로 보냅니다",toS:"선택한 플레이리스트를 rekordbox → Serato 로 보냅니다",
+ confirm:"실행 확인",cancel:"취소",ok:"실행",close:"닫기",nothing:"선택된 항목이 없습니다.",
+ willdo:"다음 작업을 실행합니다. 실행 전에 자동 백업이 만들어집니다.",del:"삭제 항목이 포함되어 있습니다. 삭제된 플레이리스트는 백업 폴더에서 복구할 수 있습니다.",
+ done:"완료",fail:"실패",verified:"검증됨",unverified:"검증 실패",tr:"트랙",
+ setT:"경로 설정",setS:"Serato 폴더 (_Serato_)",setR:"rekordbox master.db",save:"저장",
+ legend:"● 동일  ● 변경  ● 충돌/차이",missing:"파일 없음",newer:"최근 수정"},
+en:{refresh:"Refresh",settings:"Settings",sync:"Sync selected",all:"Select all changes",none:"Clear",plan:"Sync plan",log:"Result",
+ pl:"Playlist",cs:"Serato",cr:"rekordbox",status:"Status",action:"Action",note:"Note",
+ st:{same:"In sync",differs:"Differs",serato_changed:"Serato changed",rekordbox_changed:"rekordbox changed",both_changed:"Both changed",new_serato:"Only in Serato",new_rekordbox:"Only in rekordbox",deleted_in_serato:"Deleted in Serato?",deleted_in_rekordbox:"Deleted in rekordbox?",blocked:"Cannot sync"},
+ ac:{skip:"Skip",to_rekordbox:"Serato → rekordbox",to_serato:"rekordbox → Serato",delete_serato:"Delete in Serato",delete_rekordbox:"Delete in rekordbox"},
+ run:"running",idle:"closed",empty:"Nothing here",selpl:"Select a playlist",tracks:"tracks",
+ toR:"Send selected playlist Serato → rekordbox",toS:"Send selected playlist rekordbox → Serato",
+ confirm:"Confirm",cancel:"Cancel",ok:"Run",close:"Close",nothing:"Nothing selected.",
+ willdo:"The following will be done. An automatic backup is made first.",del:"Deletions are included. Deleted playlists can be restored from the backup folder.",
+ done:"Done",fail:"Failed",verified:"verified",unverified:"verification failed",tr:"tracks",
+ setT:"Paths",setS:"Serato folder (_Serato_)",setR:"rekordbox master.db",save:"Save",
+ legend:"● in sync  ● changed  ● conflict/differs",missing:"file missing",newer:"newer"}
+};
+let lang=(()=>{try{return localStorage.getItem("ps_lang")||((navigator.language||"").startsWith("ko")?"ko":"en")}catch(e){return "en"}})();
+const T=()=>I18N[lang];
+const $=s=>document.getElementById(s);
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let snap=null, sel={key:null}, picks={}, tracksCache={s:[],r:[]}, tab="plan", lastLog="";
+const CAM={1:"#40e0d0",2:"#5be07a",3:"#9be05b",4:"#d4e05b",5:"#e0b95b",6:"#e08d5b",7:"#e0675b",8:"#e05b8d",9:"#d05be0",10:"#8d5be0",11:"#5b7de0",12:"#5bb5e0"};
+function camCol(k){const m=/^(\d+)[AB]$/.exec(k||"");return m?CAM[+m[1]]:"#aaa"}
+
+async function api(path,opt){
+  opt=opt||{};opt.headers=Object.assign({"X-Token":TOKEN},opt.headers||{});
+  const r=await fetch(path,opt);const j=await r.json();
+  if(!r.ok) throw new Error(j.error||r.status);return j;
+}
+const q=o=>Object.entries(o).map(([k,v])=>k+"="+encodeURIComponent(v)).join("&");
+
+function modal(title,body,buttons){
+  return new Promise(res=>{
+    $("m-t").textContent=title;
+    if(typeof body==="string")$("m-b").textContent=body;else{$("m-b").innerHTML="";$("m-b").appendChild(body)}
+    const x=$("m-x");x.innerHTML="";
+    buttons.forEach(b=>{const e=document.createElement("button");e.textContent=b.label;if(b.primary)e.className="primary";
+      e.onclick=()=>{$("modal").style.display="none";res(b.value)};x.appendChild(e)});
+    $("modal").style.display="flex";
+  });
+}
+
+function setStatic(){
+  const t=T();
+  $("ver").textContent="v"+VERSION;$("b-ref").textContent=t.refresh;$("b-set").textContent=t.settings;
+  $("b-run").textContent=t.sync;$("b-all").textContent=t.all;$("b-none").textContent=t.none;
+  $("tab-plan").textContent=t.plan;$("tab-log").textContent=t.log;$("b-lang").textContent=lang==="ko"?"EN":"한";
+  $("b-r").title=t.toR;$("b-l").title=t.toS;
+  $("legend").innerHTML='<i class="dot same"></i>'+(lang==="ko"?"동기화됨":"in sync")+' <i class="dot serato_changed"></i>'+(lang==="ko"?"변경/신규":"changed/new")+' <i class="dot differs"></i>'+(lang==="ko"?"차이/충돌":"differs")+' <i class="dot blocked"></i>'+(lang==="ko"?"불가/삭제?":"n/a")
+}
+
+function renderTree(side){
+  const el=$(side==="s"?"tr-s":"tr-r");
+  const d=snap[side==="s"?"serato":"rekordbox"];
+  if(!d.available){el.innerHTML='<div class="msg err">'+esc(T().empty)+'</div>';return}
+  el.innerHTML="";
+  const hidden=new Set();
+  d.nodes.forEach(n=>{
+    const row=document.createElement("div");row.className="node"+(n.key===sel.key&&n.kind!=="folder"?" sel":"");
+    row.style.paddingLeft=(8+n.depth*14)+"px";
+    const ic=n.kind==="folder"?"▾":(side==="s"?"■":"≡");
+    row.innerHTML='<span class="ic">'+ic+'</span><span class="nm" title="'+esc(n.key)+'">'+esc(n.name)+'</span>'+
+      (n.count!=null?'<span class="ct">'+n.count+'</span>':'')+'<i class="dot '+(n.status||"")+'"></i>';
+    if(n.kind!=="folder"){row.onclick=()=>selectKey(n.key)}
+    el.appendChild(row);
+  });
+  if(!d.nodes.length)el.innerHTML='<div class="msg">'+esc(T().empty)+'</div>';
+}
+
+function renderGrid(side){
+  const rows=tracksCache[side],el=$(side==="s"?"gr-s":"gr-r");
+  const other=new Set((tracksCache[side==="s"?"r":"s"]).map(x=>x.k));
+  if(!sel.key){el.innerHTML='<div class="msg">'+esc(T().selpl)+'</div>';return}
+  const oth=tracksCache[side==="s"?"r":"s"];
+  let h='<table><thead><tr><th class="n">#</th><th>'+(side==="s"?"Song":"Track Title")+'</th><th class="ar">Artist</th><th class="bpm">BPM</th><th class="key">Key</th><th class="len">Time</th><th class="cm">Comment</th></tr></thead><tbody>';
+  rows.forEach((r,i)=>{
+    const o=oth[i];const mm=oth.length&&(!o||o.k!==r.k);
+    h+='<tr class="'+(r.exists?"":"miss")+'" data-i="'+i+'"><td class="n'+(mm?" mm":"")+'">'+r.n+'</td><td class="ti" title="'+esc(r.path)+'">'+esc(r.title)+'</td><td class="ar">'+esc(r.artist)+'</td><td class="bpm">'+esc(r.bpm)+'</td><td class="key k" style="color:'+camCol(r.key)+'">'+esc(r.key)+'</td><td class="len">'+esc(r.length)+'</td><td class="cm">'+esc(r.comment)+'</td></tr>';
+  });
+  el.innerHTML=h+"</tbody></table>";
+  el.querySelectorAll("tbody tr").forEach(tr=>tr.onclick=()=>{el.querySelectorAll("tr.sel").forEach(x=>x.classList.remove("sel"));tr.classList.add("sel")});
+  $(side==="s"?"pf-s":"pf-r").textContent=rows.length+" "+T().tracks;
+}
+
+async function selectKey(key){
+  sel.key=key;tracksCache={s:[],r:[]};
+  const sn=snap.serato.nodes.some(n=>n.key===key&&n.kind!=="folder"),rn=snap.rekordbox.nodes.some(n=>n.key===key&&n.kind!=="folder");
+  try{
+    const [a,b]=await Promise.all([sn?api("/api/tracks?"+q({side:"serato",key})):[],rn?api("/api/tracks?"+q({side:"rekordbox",key})):[]]);
+    tracksCache={s:a,r:b};
+  }catch(e){$("body").innerHTML='<pre class="log err">'+esc(e.message)+'</pre>'}
+  renderTree("s");renderTree("r");renderGrid("s");renderGrid("r");renderPlan();
+  $("pf-s").textContent=sn?tracksCache.s.length+" "+T().tracks:"";$("pf-r").textContent=rn?tracksCache.r.length+" "+T().tracks:"";
+}
+
+function actionOptions(it){
+  const o=["skip"];
+  if(it.blocked)return o;
+  if(it.serato)o.push("to_rekordbox");
+  if(it.rekordbox)o.push("to_serato");
+  if(it.status==="deleted_in_rekordbox")o.push("delete_serato");
+  if(it.status==="deleted_in_serato")o.push("delete_rekordbox");
+  return o;
+}
+
+function renderPlan(){
+  const body=$("body");
+  if(tab==="log"){body.innerHTML='<pre class="log">'+esc(lastLog||"")+'</pre>';updateSum();return}
+  const t=T();
+  let h='<table><thead><tr><th class="c1"></th><th>'+t.pl+'</th><th class="num">'+t.cs+'</th><th class="num">'+t.cr+'</th><th class="st">'+t.status+'</th><th class="ac">'+t.action+'</th><th>'+t.note+'</th></tr></thead><tbody>';
+  snap.plan.forEach((it,i)=>{
+    const opts=actionOptions(it);const cur=picks[it.key]||"skip";
+    h+='<tr data-k="'+esc(it.key)+'" class="'+(it.key===sel.key?"sel":"")+'"><td class="c1"><input type="checkbox" data-i="'+i+'" '+(cur!=="skip"?"checked":"")+(opts.length<2?" disabled":"")+'></td>'+
+      '<td class="pk">'+esc(it.key)+'</td><td class="num">'+(it.serato?it.serato.count:"–")+'</td><td class="num">'+(it.rekordbox?it.rekordbox.count:"–")+'</td>'+
+      '<td class="st"><i class="dot '+it.status+'"></i> '+esc(t.st[it.status]||it.status)+'</td>'+
+      '<td class="ac"><select data-i="'+i+'">'+opts.map(a=>'<option value="'+a+'"'+(a===cur?" selected":"")+'>'+esc(t.ac[a])+'</option>').join("")+'</select></td>'+
+      '<td title="'+esc(it.note)+'">'+esc(it.note)+'</td></tr>';
+  });
+  body.innerHTML=h+"</tbody></table>";
+  body.querySelectorAll("td.pk").forEach(td=>td.onclick=()=>selectKey(td.parentNode.dataset.k));
+  body.querySelectorAll("input[type=checkbox]").forEach(c=>c.onchange=()=>{
+    const it=snap.plan[+c.dataset.i];
+    picks[it.key]=c.checked?(it.action!=="skip"?it.action:actionOptions(it)[1]):"skip";renderPlan()});
+  body.querySelectorAll("select").forEach(s=>s.onchange=()=>{picks[snap.plan[+s.dataset.i].key]=s.value;renderPlan()});
+  updateSum();
+}
+function updateSum(){
+  const n=Object.values(picks).filter(v=>v&&v!=="skip").length;
+  const diff=snap?snap.plan.filter(p=>p.status!=="same").length:0;
+  $("sum").textContent=(snap?snap.plan.length:0)+" · "+(lang==="ko"?"차이 ":"diff ")+diff+" · "+(lang==="ko"?"선택 ":"picked ")+n;
+  $("b-run").disabled=!n;
+}
+
+async function load(){
+  try{
+    snap=await api("/api/snapshot");
+  }catch(e){$("body").innerHTML='<pre class="log err">'+esc(e.message)+'</pre>';return}
+  const t=T();
+  $("d-s").className="dot "+(snap.running.serato?"run":"idle");$("d-r").className="dot "+(snap.running.rekordbox?"run":"idle");
+  $("t-s").textContent="Serato "+(snap.running.serato?t.run:t.idle);$("t-r").textContent="rekordbox "+(snap.running.rekordbox?t.run:t.idle);
+  picks={};
+  renderTree("s");renderTree("r");renderPlan();
+  if(snap.errors.length)lastLog=snap.errors.join("\n");
+  if(sel.key)await selectKey(sel.key);else{renderGrid("s");renderGrid("r")}
+  if(snap.errors.length){tab="log";setTab()}
+}
+function setTab(){$("tab-plan").classList.toggle("on",tab==="plan");$("tab-log").classList.toggle("on",tab==="log");renderPlan()}
+
+async function sendOne(dir){
+  if(!sel.key||!snap)return;
+  const it=snap.plan.find(p=>p.key===sel.key);if(!it)return;
+  if(dir==="to_rekordbox"&&!it.serato||dir==="to_serato"&&!it.rekordbox)return;
+  await runDecisions([{key:it.key,action:dir}]);
+}
+async function runSelected(){
+  await runDecisions(Object.entries(picks).filter(([k,v])=>v&&v!=="skip").map(([key,action])=>({key,action})));
+}
+async function runDecisions(dec){
+  const t=T();
+  if(!dec.length){await modal(t.confirm,t.nothing,[{label:t.close,value:1,primary:true}]);return}
+  let msg=t.willdo+"\n\n"+dec.map(d=>"• "+d.key+"   "+t.ac[d.action]).join("\n");
+  if(dec.some(d=>d.action.startsWith("delete")))msg+="\n\n"+t.del;
+  const ok=await modal(t.confirm,msg,[{label:t.cancel,value:false},{label:t.ok,value:true,primary:true}]);
+  if(!ok)return;
+  $("b-run").disabled=true;
+  let r;
+  try{r=await api("/api/apply",{method:"POST",body:JSON.stringify({decisions:dec})})}
+  catch(e){r={ok:false,error:e.message,log:[]}}
+  let out=[];
+  out.push((r.ok?t.done:t.fail)+(r.error?": "+r.error:""));
+  (r.log||[]).forEach(l=>out.push(l));
+  if(r.ok&&r.result)(r.result.results||[]).forEach(x=>{
+    out.push("• "+x.key+"  "+(t.ac[x.action]||x.action)+"  "+(x.count!=null?x.count+" "+t.tr:"")+"  "+(x.verified?t.verified:t.unverified)+(x.warnings&&x.warnings.length?"\n    "+x.warnings.join("\n    "):""))});
+  if(r.ok&&r.result&&r.result.backup)out.push("backup: "+r.result.backup);
+  lastLog=out.join("\n");tab="log";setTab();
+  await load();tab="log";setTab();
+  await modal(r.ok?t.done:t.fail,out.join("\n"),[{label:t.close,value:1,primary:true}]);
+  tab="plan";setTab();
+}
+
+async function settings(){
+  const c=await api("/api/config");
+  const w=document.createElement("div");
+  w.innerHTML='<label>'+esc(T().setS)+'</label><input id="i-s"><label>'+esc(T().setR)+'</label><input id="i-r">';
+  const p=modal(T().setT,w,[{label:T().cancel,value:false},{label:T().save,value:true,primary:true}]);
+  $("i-s").value=c.serato;$("i-r").value=c.rekordbox;
+  if(await p){await api("/api/config",{method:"POST",body:JSON.stringify({serato:$("i-s").value.trim(),rekordbox:$("i-r").value.trim()})});sel.key=null;await load()}
+}
+
+$("b-ref").onclick=load;$("b-set").onclick=settings;
+$("b-r").onclick=()=>sendOne("to_rekordbox");$("b-l").onclick=()=>sendOne("to_serato");
+$("b-run").onclick=runSelected;
+$("b-all").onclick=()=>{if(!snap)return;snap.plan.forEach(p=>{if(p.status!=="same"&&p.action!=="skip"&&!p.blocked)picks[p.key]=p.action});renderPlan()};
+$("b-none").onclick=()=>{picks={};renderPlan()};
+$("b-lang").onclick=()=>{lang=lang==="ko"?"en":"ko";try{localStorage.setItem("ps_lang",lang)}catch(e){}setStatic();if(snap){load()}};
+$("tab-plan").onclick=()=>{tab="plan";setTab()};$("tab-log").onclick=()=>{tab="log";setTab()};
+setStatic();load();
+</script>
+</body>
+</html>
