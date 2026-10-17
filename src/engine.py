@@ -5,7 +5,7 @@ import os, sys, re, json, struct, time, shutil, hashlib, unicodedata, subprocess
 from pathlib import Path
 
 APP_NAME = "Playlist Sync"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 HOME = Path.home()
 DATA_DIR = Path(os.environ.get("PLAYLIST_SYNC_DATA", str(HOME / ".playlist_sync")))
 CASEFOLD = sys.platform in ("darwin", "win32")

@@ -190,7 +190,11 @@ def make_handler(app, port):
                 if u.path == "/api/tracks":
                     return self._json(app.tracks(qs["side"][0], qs["key"][0]))
                 if u.path == "/api/config":
-                    return self._json(dict(serato=app.serato_path, rekordbox=app.rb_path))
+                    return self._json(dict(serato=app.serato_path, rekordbox=app.rb_path, data_dir=str(DATA_DIR)))
+                if u.path == "/api/running":
+                    return self._json(dict(serato=serato_running(), rekordbox=rekordbox_running()))
+                if u.path == "/api/notices":
+                    return self._json(dict(text=read_notices()))
             except SyncError as e:
                 return self._json(dict(error=str(e)), 500)
             except Exception as e:
@@ -213,6 +217,15 @@ def make_handler(app, port):
             if u.path == "/api/config":
                 app.set_paths(data["serato"], data["rekordbox"])
                 return self._json(dict(ok=True))
+            if u.path == "/api/open_backups":
+                d = DATA_DIR / "backups"
+                d.mkdir(parents=True, exist_ok=True)
+                opener = "open" if sys.platform == "darwin" else ("explorer" if sys.platform == "win32" else "xdg-open")
+                try:
+                    subprocess.Popen([opener, str(d)])
+                except Exception as e:
+                    return self._json(dict(ok=False, error=str(e), path=str(d)))
+                return self._json(dict(ok=True, path=str(d)))
             self._send(404, '{"error":"not found"}')
 
     return H
@@ -221,6 +234,47 @@ def make_handler(app, port):
 class _Srv(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+
+def _resource_dir():
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    return Path(__file__).resolve().parent
+
+
+def read_notices():
+    head = ("%s %s\n" % (APP_NAME, VERSION) +
+            "Free, non-commercial, MIT License. Copyright (c) 2026 DJ Pandol.\n"
+            "Unofficial tool. Not affiliated with, endorsed or sponsored by Serato Limited or AlphaTheta Corporation.\n"
+            "Serato and Serato DJ Pro are trademarks of Serato Limited; rekordbox is a trademark of AlphaTheta Corporation.\n"
+            "Source: https://github.com/djpandol/playlist-sync\n\n")
+    for c in (_resource_dir() / "THIRD_PARTY_NOTICES.txt", _resource_dir().parent / "THIRD_PARTY_NOTICES.txt"):
+        if c.is_file():
+            return head + c.read_text("utf-8", "replace")
+    return head + "Third-party licenses: see THIRD_PARTY_NOTICES.txt in the source repository."
+
+
+def _start_server(app, port=0):
+    srv = _Srv(("127.0.0.1", port), lambda *a, **k: None)
+    port = srv.server_address[1]
+    srv.RequestHandlerClass = make_handler(app, port)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, "http://127.0.0.1:%d/?t=%s" % (port, app.token)
+
+
+def run_app(app):
+    """Native window (pywebview / macOS WebKit). Falls back to the browser."""
+    try:
+        import webview
+    except ImportError:
+        print("pywebview not installed -> opening in the browser")
+        return run_server(app, 0, True)
+    srv, url = _start_server(app)
+    webview.create_window(APP_NAME, url, width=1500, height=920, min_size=(1100, 700), background_color="#0b0b0c")
+    try:
+        webview.start()
+    finally:
+        srv.shutdown()
 
 
 def run_server(app, port=0, open_browser=True):
@@ -279,7 +333,9 @@ def main(argv=None):
     ap.add_argument("--plan", action="store_true", help="print the sync plan and exit")
     ap.add_argument("--selftest", action="store_true", help="check environment and exit")
     ap.add_argument("--install-deps", action="store_true", help="pip install pyrekordbox")
-    a = ap.parse_args(argv)
+    ap.add_argument("--app", action="store_true", help="open in a native window (needs pywebview)")
+    ap.add_argument("--browser", action="store_true", help="open in the web browser")
+    a, _unknown = ap.parse_known_args(argv)  # macOS may pass -psn_* to app bundles
     if a.install_deps:
         sys.exit(subprocess.call([sys.executable, "-m", "pip", "install", "--user", "pyrekordbox"]))
     app = App(a.serato, a.rekordbox)
@@ -289,6 +345,8 @@ def main(argv=None):
         print_plan(app.model)
         app.model.rb.close()
         return
+    if (getattr(sys, "frozen", False) or a.app) and not a.browser and not a.no_browser:
+        return run_app(app)
     run_server(app, a.port, not a.no_browser)
 
 
