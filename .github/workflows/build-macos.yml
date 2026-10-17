@@ -1,0 +1,28 @@
+name: build-macos
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  dmg:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build app + dmg
+        run: bash packaging/macos/build_mac.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PlaylistSync-mac-arm64
+          path: |
+            dist/*.dmg
+            dist/*.sha256
+      - name: Attach to GitHub release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/*.dmg dist/*.sha256 --title "Playlist Sync ${GITHUB_REF_NAME}" --notes-file packaging/macos/README_FIRST.txt || gh release upload "${GITHUB_REF_NAME}" dist/*.dmg dist/*.sha256 --clobber
