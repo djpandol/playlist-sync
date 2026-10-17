@@ -6,15 +6,24 @@ Two-way playlist sync between Serato DJ Pro crates and rekordbox playlists. Free
 왼쪽 = Serato DJ Pro 화면 스타일, 오른쪽 = rekordbox 화면 스타일. 가운데 → ← 버튼으로 선택한 플레이리스트를 보냅니다.
 Left pane = Serato-style, right pane = rekordbox-style; the centre arrows send the selected playlist.
 
-## 실행 / Run
+## Mac 앱 설치 / Install (macOS, Apple Silicon)
+
+1. `PlaylistSync-<버전>-mac-arm64.dmg` 를 받아 열고, **Playlist Sync** 를 Applications 폴더로 끌어 넣습니다.
+2. 처음 실행할 때 "확인할 수 없습니다" 경고가 뜨면 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기** 를 누르고 암호를 입력합니다 (처음 한 번). 무료 배포라 Apple 유료 서명을 받지 않은 앱입니다.
+3. 폴더 접근을 물으면 허용합니다.
+4. **Serato DJ Pro 와 rekordbox 를 종료**한 뒤 동기화합니다. 켜져 있으면 상단에 빨간 안내 줄이 뜨고 동기화 버튼이 잠깁니다.
+
+* 지원: Apple Silicon(M1 이후) Mac, macOS 12 이상. Intel Mac 은 아래 "파이썬으로 실행" 을 사용합니다.
+* `.dmg` 는 GitHub Actions(`.github/workflows/build-macos.yml`)가 macOS 에서 자동으로 빌드합니다. 직접 빌드: `bash packaging/macos/build_mac.sh`
+
+## 파이썬으로 실행 / Run with Python (any Mac)
 
 ```bash
 python3 -m pip install --user pyrekordbox      # 한 번만 / once
 python3 playlist_sync.py                        # 브라우저가 열립니다 / opens your browser
 ```
 
-* Python 3.8+, 단일 파일(`playlist_sync.py`), 외부 의존성은 `pyrekordbox` 하나입니다.
-* **Serato DJ Pro 와 rekordbox 를 모두 종료**한 뒤 동기화하세요 (실행 중이면 앱이 거부합니다).
+* 단일 파일(`playlist_sync.py`), Python 3.8+, 외부 의존성은 `pyrekordbox` 하나입니다. `pip install pywebview` 후 `--app` 을 붙이면 전용 창으로 열립니다.
 * 서버는 `127.0.0.1` 에서만 열리며 토큰으로 보호됩니다. 데이터는 밖으로 나가지 않습니다.
 
 옵션 / options:
@@ -50,6 +59,15 @@ python3 build.py        # src/*.py + ui/index.html -> playlist_sync.py
 ```
 
 `tests/` 의 테스트는 실제 Serato/rekordbox 라이브러리 복사본(`/mnt/user-data/uploads/{_Serato_,rekordbox}`)을 사용하도록 작성되어 개인 라이브러리 없이는 실행되지 않습니다. 비공개 라이브러리는 저장소에 포함하지 않습니다.
+
+## 법적 고지 / Legal
+
+* 비공식 도구입니다. Serato Limited, AlphaTheta Corporation(Pioneer DJ) 과 무관하며 승인·후원을 받지 않았습니다. *Unofficial; not affiliated with, endorsed or sponsored by Serato Limited or AlphaTheta Corporation.*
+* Serato, Serato DJ Pro 는 Serato Limited 의, rekordbox 는 AlphaTheta Corporation 의 상표입니다. 이 앱은 두 회사의 로고·아이콘·이미지를 포함하지 않습니다.
+* rekordbox 데이터베이스는 오픈소스 라이브러리 [pyrekordbox](https://github.com/dylanljones/pyrekordbox) (MIT) 로 읽고 씁니다. 사용자가 자기 컴퓨터의 자기 라이브러리를 다른 프로그램과 호환시키는 용도로만 사용하세요.
+* rekordbox 사용권 계약(EULA)에는 리버스 엔지니어링·기술 우회 제한 조항이 있습니다. 사용 전 각 프로그램의 약관을 확인하고, 본인 판단과 책임으로 사용하세요. 이 문서는 법률 자문이 아닙니다.
+* 처음 사용하기 전에 rekordbox 의 *File > Library > Backup Library* 로 백업하세요.
+* 함께 배포되는 오픈소스 구성요소(SQLCipher, OpenSSL, Python, pyrekordbox, SQLAlchemy, pywebview 등)의 라이선스 전문은 앱의 **설정 → 정보·라이선스** 와 `THIRD_PARTY_NOTICES.txt` 에 있습니다.
 
 ## 라이선스 / License
 

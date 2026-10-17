@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Playlist Sync 0.1.0 -- two-way playlist sync between Serato DJ Pro and rekordbox.
+Playlist Sync 0.2.0 -- two-way playlist sync between Serato DJ Pro and rekordbox.
 Non-commercial, free for everyone (MIT).  Run:  python3 playlist_sync.py
 """
 # ----------------------------------------------------------------------------
@@ -11,7 +11,7 @@ import os, sys, re, json, struct, time, shutil, hashlib, unicodedata, subprocess
 from pathlib import Path
 
 APP_NAME = "Playlist Sync"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 HOME = Path.home()
 DATA_DIR = Path(os.environ.get("PLAYLIST_SYNC_DATA", str(HOME / ".playlist_sync")))
 CASEFOLD = sys.platform in ("darwin", "win32")
@@ -760,7 +760,11 @@ button:hover:not(:disabled){background:#33333a}
 button:disabled{opacity:.4;cursor:default}
 button.primary{background:#1e5fa8;border-color:#2b78cc;color:#fff}
 button.primary:hover:not(:disabled){background:#2570c4}
-#app{display:grid;grid-template-rows:38px 1fr 230px;height:100%}
+#app{display:grid;grid-template-rows:38px auto 1fr 230px;height:100%}
+#banner{display:none;align-items:center;gap:10px;padding:7px 14px;background:#4a1717;color:#ffd9d9;border-bottom:1px solid #6b2323;font-weight:600}
+#banner.on{display:flex}
+.linkbtn{margin-top:10px;margin-right:6px}
+#modal pre{white-space:pre-wrap;font:11px/1.45 ui-monospace,Menlo,monospace;max-height:50vh;overflow:auto;background:#111;padding:10px;border-radius:4px}
 header{display:flex;align-items:center;gap:12px;padding:0 12px;background:#141416;border-bottom:1px solid var(--line)}
 header h1{font-size:13px;margin:0;font-weight:600;letter-spacing:.3px}
 header .sp{flex:1}
@@ -850,6 +854,7 @@ pre.log{margin:0;padding:10px;font:11px/1.45 ui-monospace,Menlo,Consolas,monospa
     <button id="b-set"></button>
     <button id="b-ref"></button>
   </header>
+  <div id="banner"><span>&#9888;</span><span id="banner-t"></span></div>
   <main>
     <section class="pane serato" id="p-s">
       <div class="ph"><span style="color:#f58b1f">&#9632;</span> Serato DJ Pro</div>
@@ -888,7 +893,8 @@ ko:{refresh:"새로고침",settings:"설정",sync:"선택 항목 동기화",all:
  willdo:"다음 작업을 실행합니다. 실행 전에 자동 백업이 만들어집니다.",del:"삭제 항목이 포함되어 있습니다. 삭제된 플레이리스트는 백업 폴더에서 복구할 수 있습니다.",
  done:"완료",fail:"실패",verified:"검증됨",unverified:"검증 실패",tr:"트랙",
  setT:"경로 설정",setS:"Serato 폴더 (_Serato_)",setR:"rekordbox master.db",save:"저장",
- legend:"● 동일  ● 변경  ● 충돌/차이",missing:"파일 없음",newer:"최근 수정"},
+ legend:"● 동일  ● 변경  ● 충돌/차이",missing:"파일 없음",newer:"최근 수정",
+ busy:"를 종료해야 동기화할 수 있습니다. 종료하면 자동으로 다시 활성화됩니다.",backups:"백업 폴더 열기",about:"정보·라이선스",aboutT:"정보·오픈소스 라이선스",opened:"Finder에서 열었습니다: "},
 en:{refresh:"Refresh",settings:"Settings",sync:"Sync selected",all:"Select all changes",none:"Clear",plan:"Sync plan",log:"Result",
  pl:"Playlist",cs:"Serato",cr:"rekordbox",status:"Status",action:"Action",note:"Note",
  st:{same:"In sync",differs:"Differs",serato_changed:"Serato changed",rekordbox_changed:"rekordbox changed",both_changed:"Both changed",new_serato:"Only in Serato",new_rekordbox:"Only in rekordbox",deleted_in_serato:"Deleted in Serato?",deleted_in_rekordbox:"Deleted in rekordbox?",blocked:"Cannot sync"},
@@ -899,7 +905,8 @@ en:{refresh:"Refresh",settings:"Settings",sync:"Sync selected",all:"Select all c
  willdo:"The following will be done. An automatic backup is made first.",del:"Deletions are included. Deleted playlists can be restored from the backup folder.",
  done:"Done",fail:"Failed",verified:"verified",unverified:"verification failed",tr:"tracks",
  setT:"Paths",setS:"Serato folder (_Serato_)",setR:"rekordbox master.db",save:"Save",
- legend:"● in sync  ● changed  ● conflict/differs",missing:"file missing",newer:"newer"}
+ legend:"● in sync  ● changed  ● conflict/differs",missing:"file missing",newer:"newer",
+ busy:" must be closed before syncing. Sync re-enables automatically when it is closed.",backups:"Open backup folder",about:"About & licenses",aboutT:"About & open-source licenses",opened:"Opened: "}
 };
 let lang=(()=>{try{return localStorage.getItem("ps_lang")||((navigator.language||"").startsWith("ko")?"ko":"en")}catch(e){return "en"}})();
 const T=()=>I18N[lang];
@@ -1011,11 +1018,21 @@ function renderPlan(){
   body.querySelectorAll("select").forEach(s=>s.onchange=()=>{picks[snap.plan[+s.dataset.i].key]=s.value;renderPlan()});
   updateSum();
 }
+function busyNames(){if(!snap)return [];const r=snap.running;return [r.serato?"Serato DJ Pro":null,r.rekordbox?"rekordbox":null].filter(Boolean)}
+function applyRunning(){
+  if(!snap)return;const t=T();
+
+
+  const b=busyNames();$("banner").classList.toggle("on",b.length>0);$("banner-t").textContent=b.join(", ")+t.busy;
+  $("b-r").disabled=b.length>0;$("b-l").disabled=b.length>0;updateSum();
+}
+async function pollRunning(){try{const r=await api("/api/running");if(snap){const was=busyNames().length;snap.running=r;applyRunning();if(was&&!busyNames().length)load()}}catch(e){}}
+setInterval(pollRunning,4000);
 function updateSum(){
   const n=Object.values(picks).filter(v=>v&&v!=="skip").length;
   const diff=snap?snap.plan.filter(p=>p.status!=="same").length:0;
   $("sum").textContent=(snap?snap.plan.length:0)+" · "+(lang==="ko"?"차이 ":"diff ")+diff+" · "+(lang==="ko"?"선택 ":"picked ")+n;
-  $("b-run").disabled=!n;
+  $("b-run").disabled=!n||busyNames().length>0;
 }
 
 async function load(){
@@ -1025,7 +1042,7 @@ async function load(){
   const t=T();
   $("d-s").className="dot "+(snap.running.serato?"run":"idle");$("d-r").className="dot "+(snap.running.rekordbox?"run":"idle");
   $("t-s").textContent="Serato "+(snap.running.serato?t.run:t.idle);$("t-r").textContent="rekordbox "+(snap.running.rekordbox?t.run:t.idle);
-  picks={};
+  picks={};applyRunning();
   renderTree("s");renderTree("r");renderPlan();
   if(snap.errors.length)lastLog=snap.errors.join("\\n");
   if(sel.key)await selectKey(sel.key);else{renderGrid("s");renderGrid("r")}
@@ -1044,6 +1061,7 @@ async function runSelected(){
 }
 async function runDecisions(dec){
   const t=T();
+  if(busyNames().length){await modal(t.confirm,busyNames().join(", ")+t.busy,[{label:t.close,value:1,primary:true}]);return}
   if(!dec.length){await modal(t.confirm,t.nothing,[{label:t.close,value:1,primary:true}]);return}
   let msg=t.willdo+"\\n\\n"+dec.map(d=>"• "+d.key+"   "+t.ac[d.action]).join("\\n");
   if(dec.some(d=>d.action.startsWith("delete")))msg+="\\n\\n"+t.del;
@@ -1068,9 +1086,11 @@ async function runDecisions(dec){
 async function settings(){
   const c=await api("/api/config");
   const w=document.createElement("div");
-  w.innerHTML='<label>'+esc(T().setS)+'</label><input id="i-s"><label>'+esc(T().setR)+'</label><input id="i-r">';
+  w.innerHTML='<label>'+esc(T().setS)+'</label><input id="i-s"><label>'+esc(T().setR)+'</label><input id="i-r"><div><button class="linkbtn" id="i-bk">'+esc(T().backups)+'</button><button class="linkbtn" id="i-ab">'+esc(T().about)+'</button></div><div id="i-msg" class="pill"></div>';
   const p=modal(T().setT,w,[{label:T().cancel,value:false},{label:T().save,value:true,primary:true}]);
   $("i-s").value=c.serato;$("i-r").value=c.rekordbox;
+  $("i-bk").onclick=async()=>{const r=await api("/api/open_backups",{method:"POST",body:"{}"});$("i-msg").textContent=(r.ok?T().opened:"")+r.path};
+  $("i-ab").onclick=async()=>{const r=await api("/api/notices");const pre=document.createElement("pre");pre.textContent=r.text;$("i-msg").innerHTML="";$("i-msg").appendChild(pre)};
   if(await p){await api("/api/config",{method:"POST",body:JSON.stringify({serato:$("i-s").value.trim(),rekordbox:$("i-r").value.trim()})});sel.key=null;await load()}
 }
 
@@ -1272,7 +1292,11 @@ def make_handler(app, port):
                 if u.path == "/api/tracks":
                     return self._json(app.tracks(qs["side"][0], qs["key"][0]))
                 if u.path == "/api/config":
-                    return self._json(dict(serato=app.serato_path, rekordbox=app.rb_path))
+                    return self._json(dict(serato=app.serato_path, rekordbox=app.rb_path, data_dir=str(DATA_DIR)))
+                if u.path == "/api/running":
+                    return self._json(dict(serato=serato_running(), rekordbox=rekordbox_running()))
+                if u.path == "/api/notices":
+                    return self._json(dict(text=read_notices()))
             except SyncError as e:
                 return self._json(dict(error=str(e)), 500)
             except Exception as e:
@@ -1295,6 +1319,15 @@ def make_handler(app, port):
             if u.path == "/api/config":
                 app.set_paths(data["serato"], data["rekordbox"])
                 return self._json(dict(ok=True))
+            if u.path == "/api/open_backups":
+                d = DATA_DIR / "backups"
+                d.mkdir(parents=True, exist_ok=True)
+                opener = "open" if sys.platform == "darwin" else ("explorer" if sys.platform == "win32" else "xdg-open")
+                try:
+                    subprocess.Popen([opener, str(d)])
+                except Exception as e:
+                    return self._json(dict(ok=False, error=str(e), path=str(d)))
+                return self._json(dict(ok=True, path=str(d)))
             self._send(404, '{"error":"not found"}')
 
     return H
@@ -1303,6 +1336,47 @@ def make_handler(app, port):
 class _Srv(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+
+def _resource_dir():
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    return Path(__file__).resolve().parent
+
+
+def read_notices():
+    head = ("%s %s\n" % (APP_NAME, VERSION) +
+            "Free, non-commercial, MIT License. Copyright (c) 2026 DJ Pandol.\n"
+            "Unofficial tool. Not affiliated with, endorsed or sponsored by Serato Limited or AlphaTheta Corporation.\n"
+            "Serato and Serato DJ Pro are trademarks of Serato Limited; rekordbox is a trademark of AlphaTheta Corporation.\n"
+            "Source: https://github.com/djpandol/playlist-sync\n\n")
+    for c in (_resource_dir() / "THIRD_PARTY_NOTICES.txt", _resource_dir().parent / "THIRD_PARTY_NOTICES.txt"):
+        if c.is_file():
+            return head + c.read_text("utf-8", "replace")
+    return head + "Third-party licenses: see THIRD_PARTY_NOTICES.txt in the source repository."
+
+
+def _start_server(app, port=0):
+    srv = _Srv(("127.0.0.1", port), lambda *a, **k: None)
+    port = srv.server_address[1]
+    srv.RequestHandlerClass = make_handler(app, port)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, "http://127.0.0.1:%d/?t=%s" % (port, app.token)
+
+
+def run_app(app):
+    """Native window (pywebview / macOS WebKit). Falls back to the browser."""
+    try:
+        import webview
+    except ImportError:
+        print("pywebview not installed -> opening in the browser")
+        return run_server(app, 0, True)
+    srv, url = _start_server(app)
+    webview.create_window(APP_NAME, url, width=1500, height=920, min_size=(1100, 700), background_color="#0b0b0c")
+    try:
+        webview.start()
+    finally:
+        srv.shutdown()
 
 
 def run_server(app, port=0, open_browser=True):
@@ -1361,7 +1435,9 @@ def main(argv=None):
     ap.add_argument("--plan", action="store_true", help="print the sync plan and exit")
     ap.add_argument("--selftest", action="store_true", help="check environment and exit")
     ap.add_argument("--install-deps", action="store_true", help="pip install pyrekordbox")
-    a = ap.parse_args(argv)
+    ap.add_argument("--app", action="store_true", help="open in a native window (needs pywebview)")
+    ap.add_argument("--browser", action="store_true", help="open in the web browser")
+    a, _unknown = ap.parse_known_args(argv)  # macOS may pass -psn_* to app bundles
     if a.install_deps:
         sys.exit(subprocess.call([sys.executable, "-m", "pip", "install", "--user", "pyrekordbox"]))
     app = App(a.serato, a.rekordbox)
@@ -1371,6 +1447,8 @@ def main(argv=None):
         print_plan(app.model)
         app.model.rb.close()
         return
+    if (getattr(sys, "frozen", False) or a.app) and not a.browser and not a.no_browser:
+        return run_app(app)
     run_server(app, a.port, not a.no_browser)
 
 
