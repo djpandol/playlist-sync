@@ -333,9 +333,18 @@ def main(argv=None):
     ap.add_argument("--plan", action="store_true", help="print the sync plan and exit")
     ap.add_argument("--selftest", action="store_true", help="check environment and exit")
     ap.add_argument("--install-deps", action="store_true", help="pip install pyrekordbox")
+    ap.add_argument("--sqlcipher-check", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--app", action="store_true", help="open in a native window (needs pywebview)")
     ap.add_argument("--browser", action="store_true", help="open in the web browser")
     a, _unknown = ap.parse_known_args(argv)  # macOS may pass -psn_* to app bundles
+    if a.sqlcipher_check:  # packaging smoke test: encrypted round trip with the bundled SQLCipher
+        import tempfile
+        from sqlcipher3 import dbapi2 as sq
+        f = os.path.join(tempfile.mkdtemp(), "t.db")
+        c = sq.connect(f); c.execute("PRAGMA key='k'"); c.execute("create table t(x)"); c.execute("insert into t values (42)"); c.commit(); c.close()
+        c = sq.connect(f); c.execute("PRAGMA key='k'"); v = c.execute("select x from t").fetchone()[0]; c.close()
+        _import_pyrekordbox()
+        print("sqlcipher round trip:", v, "| pyrekordbox import OK"); sys.exit(0 if v == 42 else 1)
     if a.install_deps:
         sys.exit(subprocess.call([sys.executable, "-m", "pip", "install", "--user", "pyrekordbox"]))
     app = App(a.serato, a.rekordbox)

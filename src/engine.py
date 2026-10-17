@@ -255,8 +255,8 @@ def _import_pyrekordbox():
         logging.getLogger("pyrekordbox").setLevel(logging.ERROR)
         from pyrekordbox import Rekordbox6Database
         return Rekordbox6Database
-    except ImportError:
-        raise SyncError("pyrekordbox 가 없습니다.  터미널에서:  python3 -m pip install pyrekordbox")
+    except ImportError as e:
+        raise SyncError("pyrekordbox 를 불러올 수 없습니다 (%s).  터미널에서:  python3 -m pip install pyrekordbox" % e)
 
 
 class Rekordbox:
