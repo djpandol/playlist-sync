@@ -261,8 +261,8 @@ def _import_pyrekordbox():
         logging.getLogger("pyrekordbox").setLevel(logging.ERROR)
         from pyrekordbox import Rekordbox6Database
         return Rekordbox6Database
-    except ImportError:
-        raise SyncError("pyrekordbox 가 없습니다.  터미널에서:  python3 -m pip install pyrekordbox")
+    except ImportError as e:
+        raise SyncError("pyrekordbox 를 불러올 수 없습니다 (%s).  터미널에서:  python3 -m pip install pyrekordbox" % e)
 
 
 class Rekordbox:
@@ -1435,9 +1435,18 @@ def main(argv=None):
     ap.add_argument("--plan", action="store_true", help="print the sync plan and exit")
     ap.add_argument("--selftest", action="store_true", help="check environment and exit")
     ap.add_argument("--install-deps", action="store_true", help="pip install pyrekordbox")
+    ap.add_argument("--sqlcipher-check", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--app", action="store_true", help="open in a native window (needs pywebview)")
     ap.add_argument("--browser", action="store_true", help="open in the web browser")
     a, _unknown = ap.parse_known_args(argv)  # macOS may pass -psn_* to app bundles
+    if a.sqlcipher_check:  # packaging smoke test: encrypted round trip with the bundled SQLCipher
+        import tempfile
+        from sqlcipher3 import dbapi2 as sq
+        f = os.path.join(tempfile.mkdtemp(), "t.db")
+        c = sq.connect(f); c.execute("PRAGMA key='k'"); c.execute("create table t(x)"); c.execute("insert into t values (42)"); c.commit(); c.close()
+        c = sq.connect(f); c.execute("PRAGMA key='k'"); v = c.execute("select x from t").fetchone()[0]; c.close()
+        _import_pyrekordbox()
+        print("sqlcipher round trip:", v, "| pyrekordbox import OK"); sys.exit(0 if v == 42 else 1)
     if a.install_deps:
         sys.exit(subprocess.call([sys.executable, "-m", "pip", "install", "--user", "pyrekordbox"]))
     app = App(a.serato, a.rekordbox)
