@@ -13,8 +13,10 @@ python3 -m PyInstaller --noconfirm --clean packaging/macos/PlaylistSync.spec
 VER=$(python3 -c "import re;print(re.search(r'^VERSION = \"([^\"]+)\"',open('src/engine.py').read(),re.M).group(1))")
 APP="dist/Playlist Sync.app"
 codesign --verify --deep "$APP" && echo "codesign: ad-hoc signature OK"
-# smoke test: the frozen engine imports and prints its self test
-"$APP/Contents/MacOS/Playlist Sync" --selftest || true
+# smoke test: the frozen app must import pyrekordbox + sqlcipher and open an encrypted DB
+SELF=$("$APP/Contents/MacOS/Playlist Sync" --selftest 2>&1 || true); echo "$SELF"
+echo "$SELF" | grep -q "pyrekordbox: OK" || { echo "FROZEN APP CANNOT IMPORT pyrekordbox"; exit 1; }
+"$APP/Contents/MacOS/Playlist Sync" --sqlcipher-check || { echo "FROZEN APP SQLCIPHER CHECK FAILED"; exit 1; }
 STAGE=$(mktemp -d); cp -R "$APP" "$STAGE/"; ln -s /Applications "$STAGE/Applications"
 cp packaging/macos/README_FIRST.txt "$STAGE/처음 실행 방법 (Read me first).txt"
 DMG="dist/PlaylistSync-$VER-mac-arm64.dmg"
