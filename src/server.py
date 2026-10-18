@@ -29,7 +29,15 @@ def _ser_row(i, p, m):
         bpm = ""
     return dict(n=i, title=m.get("title") or Path(p).stem, artist=m.get("artist", ""), bpm=bpm,
                 key=to_camelot(m.get("key", "")), length=m.get("length", ""), comment=m.get("comment", ""),
-                k=pkey(p), path=p, exists=os.path.isfile(p))
+                k=pkey(p), path=p, exists=os.path.isfile(p), cues=_ser_cue_text(p))
+
+
+def _ser_cue_text(p):
+    try:
+        c = serato_cues(p)
+    except SyncError:
+        return ""
+    return "" if c is None else (fmt_cues(c) or "-")
 
 
 def _rb_row(i, r):
@@ -39,7 +47,7 @@ def _rb_row(i, r):
         bpm = ""
     return dict(n=i, title=r["title"] or Path(r["path"]).stem, artist=r["artist"], bpm=bpm, key=to_camelot(r["key"]),
                 length=fmt_len(r["length"]), comment=r["comment"], k=pkey(r["path"]), path=r["path"],
-                exists=os.path.isfile(r["path"]))
+                exists=os.path.isfile(r["path"]), cues=fmt_cues(r.get("cues") or {}) or "-")
 
 
 CONFIG_FILE = DATA_DIR / "config.json"
@@ -270,7 +278,7 @@ def run_app(app):
         print("pywebview not installed -> opening in the browser")
         return run_server(app, 0, True)
     srv, url = _start_server(app)
-    webview.create_window(APP_NAME, url, width=1500, height=920, min_size=(1100, 700), background_color="#0b0b0c")
+    webview.create_window("%s v%s" % (APP_NAME, VERSION), url, width=1500, height=920, min_size=(1100, 700), background_color="#0b0b0c")
     try:
         webview.start()
     finally:
@@ -311,6 +319,10 @@ def selftest(app):
         print("pyrekordbox: OK")
     except SyncError as e:
         print("pyrekordbox: MISSING ->", e); ok = False
+    try:
+        _mutagen(); print("mutagen: OK")
+    except SyncError as e:
+        print("mutagen: MISSING ->", e); ok = False
     if M.serato.available():
         S = M.serato_nodes()[1]
         print("Serato crates:", len(S), "| library tracks:", len(M.serato.read_library()))

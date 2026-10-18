@@ -5,7 +5,7 @@ import os, sys, re, json, struct, time, shutil, hashlib, unicodedata, subprocess
 from pathlib import Path
 
 APP_NAME = "Playlist Sync"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 HOME = Path.home()
 DATA_DIR = Path(os.environ.get("PLAYLIST_SYNC_DATA", str(HOME / ".playlist_sync")))
 CASEFOLD = sys.platform in ("darwin", "win32")
@@ -279,6 +279,7 @@ class Rekordbox:
         return self.db
 
     def close(self):
+        self._cues = None
         if self.db is not None:
             try:
                 self.db.close()
@@ -321,13 +322,31 @@ class Rekordbox:
         q = db.query(tables.DjmdSongPlaylist).filter_by(PlaylistID=str(playlist_id)).order_by(tables.DjmdSongPlaylist.TrackNo)
         return q.all()
 
+    def all_hot_cues(self):
+        """ContentID -> {idx: ms} for hot cues A-H (memory cues and loops are left out)"""
+        if getattr(self, "_cues", None) is not None:
+            return self._cues
+        db = self.open()
+        from pyrekordbox.db6 import tables
+        out = {}
+        for q in db.query(tables.DjmdCue).all():
+            idx = kind_to_idx(q.Kind)
+            if idx is None or q.InMsec is None or q.InMsec < 0:
+                continue
+            out.setdefault(str(q.ContentID), {})[idx] = int(q.InMsec)
+        self._cues = out
+        return out
+
     def playlist_rows(self, playlist_id):
         rows, mt = [], 0
+        cues = self.all_hot_cues()
         for s in self.songs(playlist_id):
             c = s.Content
             if c is None:
                 continue
-            rows.append(self._row(c))
+            r = self._row(c)
+            r["cues"] = cues.get(str(c.ID), {})
+            rows.append(r)
             if s.updated_at:
                 mt = max(mt, s.updated_at.timestamp())
         return rows, mt

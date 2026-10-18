@@ -36,6 +36,22 @@ def _safe_name(s):
     return nfc(s).replace("/", "-").replace("\\", "-").replace(SEP, "-")
 
 
+def cue_todo(rows):
+    """rekordbox rows -> [(path, rb_cues, serato_cues)] where a rekordbox hot cue is missing/different in the
+    file's Serato tag. Serato-only slots are kept, so they never count as a difference."""
+    out = []
+    for r in rows:
+        rc = r.get("cues") or {}
+        if not rc:
+            continue
+        sc = serato_cues(r["path"])
+        if sc is None:          # format without ID3-based Serato tags, or file missing
+            continue
+        if any(sc.get(i) != ms for i, ms in rc.items()):
+            out.append((r["path"], rc, sc))
+    return out
+
+
 class Model:
     def __init__(self, serato_root=None, rb_path=None, state_dir=None):
         self.serato = Serato(serato_root)
@@ -146,6 +162,18 @@ class Model:
                     it.update(status="new_rekordbox", action="to_serato", note="rekordbox에만 있음 → Serato에 새로 만들기")
                 else:
                     it.update(status="deleted_in_serato", action="skip", note="Serato에서 삭제된 것으로 보임 (삭제 전파는 직접 선택)")
+            if s and r and not it["blocked"]:
+                try:
+                    n = len(cue_todo(r["rows"]))
+                except SyncError:
+                    n = 0
+                it["cue_diff"] = n
+                if n:
+                    if it["status"] == "same":
+                        it.update(status="cues_differ", action="to_serato",
+                                  note="곡 목록 동일 · 핫큐가 다른 곡 %d개 → rekordbox 핫큐를 Serato 파일에 씀" % n)
+                    else:
+                        it["note"] += " · 핫큐 차이 %d곡" % n
             items.append(it)
         return items
 
@@ -240,7 +268,16 @@ class Model:
                 name = SEP.join(_safe_name(x) for x in it["key"].split("/"))
                 self.serato.write_crate(name, paths)
                 log("Serato 크레이트 기록: %s (%d곡)" % (name, len(paths)))
-                report.append(dict(key=it["key"], action=a, count=len(paths), warnings=[], written=_sig(paths)))
+                rep = dict(key=it["key"], action=a, count=len(paths), warnings=[], written=_sig(paths), cues=[])
+                for path, rc, sc in cue_todo(rows):
+                    want = dict(sc); want.update(rc)
+                    got = write_serato_cues(path, want, bdir / "audio_originals")
+                    ok = got == want
+                    rep["cues"].append(dict(file=Path(path).name, cues=fmt_cues(rc), verified=ok))
+                    log("Serato 핫큐 기록: %s  [%s]  %s" % (Path(path).name, fmt_cues(rc), "검증됨" if ok else "검증 실패"))
+                    if not ok:
+                        rep["warnings"].append("핫큐 검증 실패: " + Path(path).name)
+                report.append(rep)
             elif a == "delete_serato":
                 self.serato.remove_crate_to(S[it["key"]]["name"], bdir / "serato" / "deleted")
                 report.append(dict(key=it["key"], action=a, count=0, warnings=[], written=None))
@@ -257,7 +294,7 @@ class Model:
                 rp["verified"] = got == rp["written"]
             elif a == "to_serato":
                 got = _sig(S2[k]["paths"]) if k in S2 else None
-                rp["verified"] = got == rp["written"]
+                rp["verified"] = got == rp["written"] and all(c["verified"] for c in rp.get("cues", []))
             elif a == "delete_serato":
                 rp["verified"] = k not in S2
             else:
