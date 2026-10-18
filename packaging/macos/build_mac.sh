@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 python3 -m pip install --upgrade pip
-python3 -m pip install "pyrekordbox==0.4.4" "pywebview>=5,<7" "pyinstaller>=6.10" pip-licenses
+python3 -m pip install "pyrekordbox==0.4.4" "mutagen==1.48.1" "pywebview>=5,<7" "pyinstaller>=6.10" pip-licenses
 python3 build.py
 python3 -m py_compile playlist_sync.py
 python3 playlist_sync.py --selftest || true          # environment report (no library on CI)

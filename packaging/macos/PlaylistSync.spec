@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 ROOT = pathlib.Path(SPECPATH).resolve().parents[1]
 VERSION = re.search(r'^VERSION = "([^"]+)"', (ROOT / "src" / "engine.py").read_text(), re.M).group(1)
 datas, binaries, hidden = [(str(ROOT / "THIRD_PARTY_NOTICES.txt"), "."), (str(ROOT / "LICENSE"), ".")], [], []
-for pkg in ("pyrekordbox", "sqlcipher3", "webview", "sqlalchemy"):
+for pkg in ("pyrekordbox", "sqlcipher3", "webview", "sqlalchemy", "mutagen"):
     d, b, h = collect_all(pkg)
     datas += d; binaries += b; hidden += h
 hidden += collect_submodules("sqlalchemy.dialects.sqlite")
