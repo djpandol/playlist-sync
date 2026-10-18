@@ -7,13 +7,17 @@
 <style>
 :root{--bg:#0b0b0c;--line:#2a2a2d;--txt:#d6d6d6;--dim:#8a8a8f;--ok:#3fb950;--warn:#e3a008;--bad:#e5484d;--info:#4a9eff}
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font:12px/1.35 -apple-system,"Apple SD Gothic Neo","Malgun Gothic",Segoe UI,Helvetica,Arial,sans-serif;overflow:hidden}
+html,body{margin:0;height:100vh;background:var(--bg);color:var(--txt);font:12px/1.35 -apple-system,"Apple SD Gothic Neo","Malgun Gothic",Segoe UI,Helvetica,Arial,sans-serif;overflow:hidden}
 button,select{font:inherit;color:var(--txt);background:#26262a;border:1px solid #3a3a40;border-radius:4px;padding:4px 10px;cursor:pointer}
 button:hover:not(:disabled){background:#33333a}
 button:disabled{opacity:.4;cursor:default}
 button.primary{background:#1e5fa8;border-color:#2b78cc;color:#fff}
 button.primary:hover:not(:disabled){background:#2570c4}
-#app{display:grid;grid-template-rows:38px auto 1fr 230px;height:100%}
+#app{display:grid;grid-template-rows:38px auto minmax(260px,1fr) minmax(230px,40vh);height:100vh}
+#app>header{grid-row:1}#banner{grid-row:2}#app>main{grid-row:3}#app>.plan{grid-row:4}
+td.cue,th.cue{width:118px;font-variant-numeric:tabular-nums}
+td.cue{color:#e8b04a}
+td.cue.cd{box-shadow:inset 3px 0 0 var(--warn)}
 #banner{display:none;align-items:center;gap:10px;padding:7px 14px;background:#4a1717;color:#ffd9d9;border-bottom:1px solid #6b2323;font-weight:600}
 #banner.on{display:flex}
 .linkbtn{margin-top:10px;margin-right:6px}
@@ -24,7 +28,7 @@ header .sp{flex:1}
 .pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim)}
 .dot{width:8px;height:8px;border-radius:50%;background:#555;display:inline-block;flex:none}
 .dot.same{background:var(--ok)}.dot.differs,.dot.both_changed{background:var(--bad)}
-.dot.serato_changed,.dot.rekordbox_changed,.dot.new_serato,.dot.new_rekordbox{background:var(--warn)}
+.dot.cues_differ,.dot.serato_changed,.dot.rekordbox_changed,.dot.new_serato,.dot.new_rekordbox{background:var(--warn)}
 .dot.deleted_in_serato,.dot.deleted_in_rekordbox,.dot.blocked{background:#777}
 .dot.run{background:var(--bad)}.dot.idle{background:var(--ok)}
 main{display:grid;grid-template-columns:1fr 54px 1fr;min-height:0}
@@ -44,7 +48,7 @@ table{border-collapse:collapse;width:100%;table-layout:fixed}
 th{position:sticky;top:0;text-align:left;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.4px;padding:0 6px;height:22px;white-space:nowrap;overflow:hidden}
 td{padding:0 6px;height:22px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 td.n,th.n{width:34px;text-align:right}td.bpm,th.bpm{width:44px;text-align:right}td.key,th.key{width:46px}td.len,th.len{width:48px;text-align:right}
-td.ar,th.ar{width:26%}td.cm,th.cm{width:20%}
+td.ar,th.ar{width:18%}td.cm,th.cm{width:14%}
 tr.miss td{opacity:.5;text-decoration:line-through}
 /* ---- Serato look ---- */
 .serato{background:#111}
@@ -138,7 +142,7 @@ const TOKEN="__TOKEN__", VERSION="__VERSION__";
 const I18N={
 ko:{refresh:"새로고침",settings:"설정",sync:"선택 항목 동기화",all:"변경 항목 모두 선택",none:"선택 해제",plan:"동기화 계획",log:"결과",
  pl:"플레이리스트",cs:"Serato",cr:"rekordbox",status:"상태",action:"동작",note:"설명",
- st:{same:"동일",differs:"서로 다름",serato_changed:"Serato 변경",rekordbox_changed:"rekordbox 변경",both_changed:"양쪽 변경",new_serato:"Serato에만 있음",new_rekordbox:"rekordbox에만 있음",deleted_in_serato:"Serato에서 삭제됨?",deleted_in_rekordbox:"rekordbox에서 삭제됨?",blocked:"동기화 불가"},
+ st:{same:"동일",differs:"서로 다름",serato_changed:"Serato 변경",rekordbox_changed:"rekordbox 변경",both_changed:"양쪽 변경",new_serato:"Serato에만 있음",new_rekordbox:"rekordbox에만 있음",deleted_in_serato:"Serato에서 삭제됨?",deleted_in_rekordbox:"rekordbox에서 삭제됨?",blocked:"동기화 불가",cues_differ:"핫큐 차이"},
  ac:{skip:"건너뜀",to_rekordbox:"Serato → rekordbox",to_serato:"rekordbox → Serato",delete_serato:"Serato에서 삭제",delete_rekordbox:"rekordbox에서 삭제"},
  run:"실행 중",idle:"종료됨",empty:"항목이 없습니다",selpl:"플레이리스트를 선택하세요",tracks:"곡",
  toR:"선택한 플레이리스트를 Serato → rekordbox 로 보냅니다",toS:"선택한 플레이리스트를 rekordbox → Serato 로 보냅니다",
@@ -150,7 +154,7 @@ ko:{refresh:"새로고침",settings:"설정",sync:"선택 항목 동기화",all:
  busy:"를 종료해야 동기화할 수 있습니다. 종료하면 자동으로 다시 활성화됩니다.",backups:"백업 폴더 열기",about:"정보·라이선스",aboutT:"정보·오픈소스 라이선스",opened:"Finder에서 열었습니다: "},
 en:{refresh:"Refresh",settings:"Settings",sync:"Sync selected",all:"Select all changes",none:"Clear",plan:"Sync plan",log:"Result",
  pl:"Playlist",cs:"Serato",cr:"rekordbox",status:"Status",action:"Action",note:"Note",
- st:{same:"In sync",differs:"Differs",serato_changed:"Serato changed",rekordbox_changed:"rekordbox changed",both_changed:"Both changed",new_serato:"Only in Serato",new_rekordbox:"Only in rekordbox",deleted_in_serato:"Deleted in Serato?",deleted_in_rekordbox:"Deleted in rekordbox?",blocked:"Cannot sync"},
+ st:{same:"In sync",differs:"Differs",serato_changed:"Serato changed",rekordbox_changed:"rekordbox changed",both_changed:"Both changed",new_serato:"Only in Serato",new_rekordbox:"Only in rekordbox",deleted_in_serato:"Deleted in Serato?",deleted_in_rekordbox:"Deleted in rekordbox?",blocked:"Cannot sync",cues_differ:"Hot cues differ"},
  ac:{skip:"Skip",to_rekordbox:"Serato → rekordbox",to_serato:"rekordbox → Serato",delete_serato:"Delete in Serato",delete_rekordbox:"Delete in rekordbox"},
  run:"running",idle:"closed",empty:"Nothing here",selpl:"Select a playlist",tracks:"tracks",
  toR:"Send selected playlist Serato → rekordbox",toS:"Send selected playlist rekordbox → Serato",
@@ -219,10 +223,10 @@ function renderGrid(side){
   const other=new Set((tracksCache[side==="s"?"r":"s"]).map(x=>x.k));
   if(!sel.key){el.innerHTML='<div class="msg">'+esc(T().selpl)+'</div>';return}
   const oth=tracksCache[side==="s"?"r":"s"];
-  let h='<table><thead><tr><th class="n">#</th><th>'+(side==="s"?"Song":"Track Title")+'</th><th class="ar">Artist</th><th class="bpm">BPM</th><th class="key">Key</th><th class="len">Time</th><th class="cm">Comment</th></tr></thead><tbody>';
+  let h='<table><thead><tr><th class="n">#</th><th>'+(side==="s"?"Song":"Track Title")+'</th><th class="ar">Artist</th><th class="bpm">BPM</th><th class="key">Key</th><th class="len">Time</th><th class="cue">Hot Cue</th><th class="cm">Comment</th></tr></thead><tbody>';
   rows.forEach((r,i)=>{
     const o=oth[i];const mm=oth.length&&(!o||o.k!==r.k);
-    h+='<tr class="'+(r.exists?"":"miss")+'" data-i="'+i+'"><td class="n'+(mm?" mm":"")+'">'+r.n+'</td><td class="ti" title="'+esc(r.path)+'">'+esc(r.title)+'</td><td class="ar">'+esc(r.artist)+'</td><td class="bpm">'+esc(r.bpm)+'</td><td class="key k" style="color:'+camCol(r.key)+'">'+esc(r.key)+'</td><td class="len">'+esc(r.length)+'</td><td class="cm">'+esc(r.comment)+'</td></tr>';
+    h+='<tr class="'+(r.exists?"":"miss")+'" data-i="'+i+'"><td class="n'+(mm?" mm":"")+'">'+r.n+'</td><td class="ti" title="'+esc(r.path)+'">'+esc(r.title)+'</td><td class="ar">'+esc(r.artist)+'</td><td class="bpm">'+esc(r.bpm)+'</td><td class="key k" style="color:'+camCol(r.key)+'">'+esc(r.key)+'</td><td class="len">'+esc(r.length)+'</td><td class="cue'+(o&&o.k===r.k&&side==="s"&&r.cues!==""&&o.cues!=="-"&&r.cues!==o.cues?" cd":"")+'" title="'+esc(r.cues)+'">'+esc(r.cues)+'</td><td class="cm">'+esc(r.comment)+'</td></tr>';
   });
   el.innerHTML=h+"</tbody></table>";
   el.querySelectorAll("tbody tr").forEach(tr=>tr.onclick=()=>{el.querySelectorAll("tr.sel").forEach(x=>x.classList.remove("sel"));tr.classList.add("sel")});
