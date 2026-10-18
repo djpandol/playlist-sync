@@ -9,7 +9,7 @@ Playlist Sync %s -- two-way playlist sync between Serato DJ Pro and rekordbox.
 Non-commercial, free for everyone (MIT).  Run:  python3 playlist_sync.py
 """
 '''
-parts = [(r / "src" / n).read_text("utf-8") for n in ("engine.py", "sync.py")]
+parts = [(r / "src" / n).read_text("utf-8") for n in ("engine.py", "cues.py", "sync.py")]
 srv = (r / "src" / "server.py")
 if srv.exists():
     ui = (r / "ui" / "index.html").read_text("utf-8") if (r / "ui" / "index.html").exists() else ""

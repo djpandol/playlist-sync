@@ -36,6 +36,13 @@ python3 playlist_sync.py --serato "/path/_Serato_" --rekordbox "/path/master.db"
 
 ## 동작 / How it works
 
+**v0.3.0 핫큐 동기화 (rekordbox → Serato)**
+* rekordbox 핫큐 A–H 를 시간(밀리초) 그대로 Serato 핫큐 1–8 (A–H) 에 넣습니다. rekordbox DB 의 `Kind` 1–3 = A–C, 5–9 = D–H 로 읽습니다 (4 는 루프).
+* Serato 는 핫큐를 음악 파일 안의 `Serato Markers2` 태그에 저장하므로, 이 기능은 **음악 파일의 태그를 수정**합니다. 오디오 데이터는 바꾸지 않으며, 쓰기 전에 원본 파일을 백업 폴더(`audio_originals`)에 복사합니다.
+* rekordbox 에 있는 슬롯만 덮어쓰고, Serato 에만 있는 슬롯은 그대로 둡니다. 쓴 뒤 파일을 다시 읽어 검증합니다. 구버전 `Serato Markers_` 태그는 Serato 가 새 값을 보이도록 제거합니다 (serato-tools 와 같은 방식).
+* 지원 형식: MP3, AIFF (검증된 방식), WAV (ID3 청크, 실험). FLAC·M4A·OGG 는 아직 지원하지 않습니다.
+* Serato → rekordbox 핫큐, 메모리 큐·루프·코멘트·아티스트 동기화는 아직 지원하지 않습니다.
+
 * 곡의 동일성은 **파일 경로**(유니코드 NFC, macOS/Windows 는 대소문자 무시)로 판단하고, **순서와 중복**까지 그대로 옮깁니다.
 * 마지막 동기화 상태(`~/.playlist_sync/state.json`)와 비교하는 3-way 방식: 한쪽만 바뀌면 그 방향으로, 양쪽이 바뀌면 "충돌"로 표시하고 기본값은 최근 수정된 쪽입니다(직접 바꿀 수 있음).
 * Serato 하위 크레이트(`Parent%%Child`) ⇄ rekordbox 폴더 구조를 서로 대응시킵니다.
@@ -67,7 +74,7 @@ python3 build.py        # src/*.py + ui/index.html -> playlist_sync.py
 * rekordbox 데이터베이스는 오픈소스 라이브러리 [pyrekordbox](https://github.com/dylanljones/pyrekordbox) (MIT) 로 읽고 씁니다. 사용자가 자기 컴퓨터의 자기 라이브러리를 다른 프로그램과 호환시키는 용도로만 사용하세요.
 * rekordbox 사용권 계약(EULA)에는 리버스 엔지니어링·기술 우회 제한 조항이 있습니다. 사용 전 각 프로그램의 약관을 확인하고, 본인 판단과 책임으로 사용하세요. 이 문서는 법률 자문이 아닙니다.
 * 처음 사용하기 전에 rekordbox 의 *File > Library > Backup Library* 로 백업하세요.
-* 함께 배포되는 오픈소스 구성요소(SQLCipher, OpenSSL, Python, pyrekordbox, SQLAlchemy, pywebview 등)의 라이선스 전문은 앱의 **설정 → 정보·라이선스** 와 `THIRD_PARTY_NOTICES.txt` 에 있습니다.
+* 함께 배포되는 오픈소스 구성요소(SQLCipher, OpenSSL, Python, pyrekordbox, SQLAlchemy, pywebview, mutagen 등)의 라이선스 전문은 앱의 **설정 → 정보·라이선스** 와 `THIRD_PARTY_NOTICES.txt` 에 있습니다.
 
 ## 라이선스 / License
 

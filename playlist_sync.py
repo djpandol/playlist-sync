@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Playlist Sync 0.2.0 -- two-way playlist sync between Serato DJ Pro and rekordbox.
+Playlist Sync 0.3.0 -- two-way playlist sync between Serato DJ Pro and rekordbox.
 Non-commercial, free for everyone (MIT).  Run:  python3 playlist_sync.py
 """
 # ----------------------------------------------------------------------------
@@ -11,7 +11,7 @@ import os, sys, re, json, struct, time, shutil, hashlib, unicodedata, subprocess
 from pathlib import Path
 
 APP_NAME = "Playlist Sync"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 HOME = Path.home()
 DATA_DIR = Path(os.environ.get("PLAYLIST_SYNC_DATA", str(HOME / ".playlist_sync")))
 CASEFOLD = sys.platform in ("darwin", "win32")
@@ -285,6 +285,7 @@ class Rekordbox:
         return self.db
 
     def close(self):
+        self._cues = None
         if self.db is not None:
             try:
                 self.db.close()
@@ -327,13 +328,31 @@ class Rekordbox:
         q = db.query(tables.DjmdSongPlaylist).filter_by(PlaylistID=str(playlist_id)).order_by(tables.DjmdSongPlaylist.TrackNo)
         return q.all()
 
+    def all_hot_cues(self):
+        """ContentID -> {idx: ms} for hot cues A-H (memory cues and loops are left out)"""
+        if getattr(self, "_cues", None) is not None:
+            return self._cues
+        db = self.open()
+        from pyrekordbox.db6 import tables
+        out = {}
+        for q in db.query(tables.DjmdCue).all():
+            idx = kind_to_idx(q.Kind)
+            if idx is None or q.InMsec is None or q.InMsec < 0:
+                continue
+            out.setdefault(str(q.ContentID), {})[idx] = int(q.InMsec)
+        self._cues = out
+        return out
+
     def playlist_rows(self, playlist_id):
         rows, mt = [], 0
+        cues = self.all_hot_cues()
         for s in self.songs(playlist_id):
             c = s.Content
             if c is None:
                 continue
-            rows.append(self._row(c))
+            r = self._row(c)
+            r["cues"] = cues.get(str(c.ID), {})
+            rows.append(r)
             if s.updated_at:
                 mt = max(mt, s.updated_at.timestamp())
         return rows, mt
@@ -360,6 +379,203 @@ class Rekordbox:
             if c.FolderPath:
                 idx[pkey(c.FolderPath)] = c
         return idx
+
+# ----------------------------------------------------------------------------
+# CUES : hot cues A-H between rekordbox (master.db djmdCue) and Serato (file tag "Serato Markers2")
+#   rekordbox djmdCue.Kind: 0 = memory cue, hot cue A-C = 1-3, D-H = 5-9 (4 is used by loops)
+#   Serato Markers2 CUE entry: index 0-7 = A-H, position in milliseconds
+#   Sources: pyrekordbox db6 format docs; github.com/takayamaki/rbx PR #7;
+#            "Reversing Serato's GEOB tags" (J. Holthuis); github.com/Holzhaus/serato-tags
+# ----------------------------------------------------------------------------
+import base64
+
+LETTERS = "ABCDEFGH"
+_KIND2IDX = {1: 0, 2: 1, 3: 2, 5: 3, 6: 4, 7: 5, 8: 6, 9: 7}
+CUE_EXTS = {".mp3", ".wav", ".aif", ".aiff"}      # formats whose Serato tags live in ID3
+DEFAULT_RGB = b"\xcc\x00\x00"                    # red, as documented for Serato CUE colour bytes
+_GEOB_DESC = "Serato Markers2"
+_MIN_GEOB = 470                                  # size Serato pads the frame to (observed)
+
+
+def kind_to_idx(kind):
+    try:
+        return _KIND2IDX.get(int(kind))
+    except (TypeError, ValueError):
+        return None
+
+
+def fmt_cues(cues):
+    """{idx: ms} -> 'A 0:49.0  B 0:34.3'"""
+    out = []
+    for i in sorted(cues):
+        ms = cues[i]
+        d = (int(ms) + 50) // 100                     # tenths of a second, rounded half up
+        out.append("%s %d:%02d.%d" % (LETTERS[i], d // 600, (d % 600) // 10, d % 10))
+    return "  ".join(out)
+
+
+def _mutagen():
+    try:
+        import mutagen
+        from mutagen import id3
+        return mutagen, id3
+    except ImportError:
+        raise SyncError("mutagen 이 없습니다.  터미널에서:  python3 -m pip install mutagen")
+
+
+def _open_tags(path, create=False):
+    """Return (file_object, id3_tags) for mp3 / wav / aiff, or (None, None)."""
+    mutagen, id3 = _mutagen()
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in CUE_EXTS or not os.path.isfile(path):
+        return None, None
+    if ext == ".mp3":
+        from mutagen.mp3 import MP3
+        f = MP3(path)
+    elif ext == ".wav":
+        from mutagen.wave import WAVE
+        f = WAVE(path)
+    else:
+        from mutagen.aiff import AIFF
+        f = AIFF(path)
+    if f.tags is None and create:
+        f.add_tags()
+    return f, f.tags
+
+
+# ---- Markers2 payload <-> entries
+def _decode_geob(data):
+    if data[:2] == b"\x01\x01":
+        data = data[2:]
+    data = data.split(b"\x00", 1)[0].replace(b"\n", b"").replace(b"\r", b"")
+    for cut in (0, 1, 2, 3):                       # tolerate odd lengths / missing padding
+        s = data[:len(data) - cut] if cut else data
+        try:
+            return base64.b64decode(s + b"=" * (-len(s) % 4))
+        except Exception:
+            continue
+    return b""
+
+
+def parse_markers2(data):
+    """GEOB data -> list of (name, bytes) entries"""
+    p = _decode_geob(data)
+    if p[:2] != b"\x01\x01":
+        return []
+    i, out = 2, []
+    while i < len(p):
+        j = p.find(b"\x00", i)
+        if j <= i:
+            break
+        name = p[i:j].decode("latin1")
+        if j + 5 > len(p):
+            break
+        ln = struct.unpack(">I", p[j + 1:j + 5])[0]
+        out.append((name, p[j + 5:j + 5 + ln]))
+        i = j + 5 + ln
+    return out
+
+
+def build_markers2(entries):
+    payload = b"\x01\x01" + b"".join(n.encode("latin1") + b"\x00" + struct.pack(">I", len(d)) + d for n, d in entries) + b"\x00"
+    b64 = base64.b64encode(payload)
+    b64 = b"\n".join(b64[i:i + 72] for i in range(0, len(b64), 72))
+    data = b"\x01\x01" + b64
+    return data + b"\x00" * max(1, _MIN_GEOB - len(data))
+
+
+def cue_entry(idx, ms, rgb=DEFAULT_RGB, name=""):
+    return b"\x00" + bytes([idx]) + struct.pack(">I", int(ms)) + b"\x00" + rgb + b"\x00\x00" + name.encode("utf-8") + b"\x00"
+
+
+def parse_cue_entry(d):
+    if len(d) < 13:
+        return None
+    return dict(idx=d[1], ms=struct.unpack(">I", d[2:6])[0], rgb=d[7:10], name=d[12:].split(b"\x00", 1)[0].decode("utf-8", "replace"))
+
+
+# ---- public: read / write Serato hot cues of one file
+_SER_CACHE = {}
+
+
+def serato_cues(path):
+    """{idx: ms} of hot cues in the file's Serato tag, None if format unsupported / unreadable"""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = (path, st.st_mtime, st.st_size)
+    if key in _SER_CACHE:
+        return _SER_CACHE[key]
+    res = None
+    try:
+        f, tags = _open_tags(path)
+        if f is not None:
+            res = {}
+            if tags is not None:
+                for fr in tags.getall("GEOB"):
+                    if fr.desc == _GEOB_DESC:
+                        for n, d in parse_markers2(fr.data):
+                            if n == "CUE":
+                                c = parse_cue_entry(d)
+                                if c and c["idx"] < 8:
+                                    res[c["idx"]] = c["ms"]
+    except SyncError:
+        raise
+    except Exception:
+        res = None
+    _SER_CACHE[key] = res
+    return res
+
+
+def write_serato_cues(path, cues, backup_dir=None):
+    """Replace the file's Serato hot cues with `cues` ({idx: ms}). Other Markers2 entries
+    (track colour, BPM lock, loops, flips) are kept; colours/names of slots that already exist are kept.
+    Returns the hot cues read back from disk."""
+    mutagen, id3 = _mutagen()
+    f, tags = _open_tags(path, create=True)
+    if f is None:
+        raise SyncError("Serato 핫큐를 쓸 수 없는 형식: " + path)
+    if backup_dir:
+        Path(backup_dir).mkdir(parents=True, exist_ok=True)
+        dst = Path(backup_dir) / Path(path).name
+        n = 1
+        while dst.exists():
+            dst = Path(backup_dir) / ("%s.%d%s" % (Path(path).stem, n, Path(path).suffix)); n += 1
+        shutil.copy2(path, dst)
+    old = []
+    for fr in tags.getall("GEOB"):
+        if fr.desc == _GEOB_DESC:
+            old = parse_markers2(fr.data)
+    prev = {}
+    kept = []
+    for n, d in old:
+        if n == "CUE":
+            c = parse_cue_entry(d)
+            if c:
+                prev[c["idx"]] = c
+        else:
+            kept.append((n, d))
+    new = []
+    for idx in sorted(cues):
+        p = prev.get(idx)
+        new.append(("CUE", cue_entry(idx, cues[idx], p["rgb"] if p else DEFAULT_RGB, p["name"] if p else "")))
+    # Serato order: COLOR first, then CUEs, then the rest
+    color = [e for e in kept if e[0] == "COLOR"]
+    rest = [e for e in kept if e[0] != "COLOR"]
+    data = build_markers2(color + new + rest)
+    tags.delall("GEOB:" + _GEOB_DESC)
+    # Older "Serato Markers_" tag also carries cues; serato-tools removes it so Serato shows the Markers2 values
+    tags.delall("GEOB:Serato Markers_")
+    tags.add(id3.GEOB(encoding=0, mime="application/octet-stream", filename="", desc=_GEOB_DESC, data=data))
+    ver = getattr(tags, "version", (2, 4, 0))
+    if isinstance(f.tags, id3.ID3) and ver[1] == 3:
+        f.save(v2_version=3)          # keep the file's existing ID3 version
+    else:
+        f.save()
+    _SER_CACHE.clear()
+    got = serato_cues(path)
+    return got
 
 # ----------------------------------------------------------------------------
 # SYNC : planner / applier (stateful three-way, playlist level, order-exact)
@@ -397,6 +613,22 @@ def _diff(a, b):
 
 def _safe_name(s):
     return nfc(s).replace("/", "-").replace("\\", "-").replace(SEP, "-")
+
+
+def cue_todo(rows):
+    """rekordbox rows -> [(path, rb_cues, serato_cues)] where a rekordbox hot cue is missing/different in the
+    file's Serato tag. Serato-only slots are kept, so they never count as a difference."""
+    out = []
+    for r in rows:
+        rc = r.get("cues") or {}
+        if not rc:
+            continue
+        sc = serato_cues(r["path"])
+        if sc is None:          # format without ID3-based Serato tags, or file missing
+            continue
+        if any(sc.get(i) != ms for i, ms in rc.items()):
+            out.append((r["path"], rc, sc))
+    return out
 
 
 class Model:
@@ -509,6 +741,18 @@ class Model:
                     it.update(status="new_rekordbox", action="to_serato", note="rekordbox에만 있음 → Serato에 새로 만들기")
                 else:
                     it.update(status="deleted_in_serato", action="skip", note="Serato에서 삭제된 것으로 보임 (삭제 전파는 직접 선택)")
+            if s and r and not it["blocked"]:
+                try:
+                    n = len(cue_todo(r["rows"]))
+                except SyncError:
+                    n = 0
+                it["cue_diff"] = n
+                if n:
+                    if it["status"] == "same":
+                        it.update(status="cues_differ", action="to_serato",
+                                  note="곡 목록 동일 · 핫큐가 다른 곡 %d개 → rekordbox 핫큐를 Serato 파일에 씀" % n)
+                    else:
+                        it["note"] += " · 핫큐 차이 %d곡" % n
             items.append(it)
         return items
 
@@ -603,7 +847,16 @@ class Model:
                 name = SEP.join(_safe_name(x) for x in it["key"].split("/"))
                 self.serato.write_crate(name, paths)
                 log("Serato 크레이트 기록: %s (%d곡)" % (name, len(paths)))
-                report.append(dict(key=it["key"], action=a, count=len(paths), warnings=[], written=_sig(paths)))
+                rep = dict(key=it["key"], action=a, count=len(paths), warnings=[], written=_sig(paths), cues=[])
+                for path, rc, sc in cue_todo(rows):
+                    want = dict(sc); want.update(rc)
+                    got = write_serato_cues(path, want, bdir / "audio_originals")
+                    ok = got == want
+                    rep["cues"].append(dict(file=Path(path).name, cues=fmt_cues(rc), verified=ok))
+                    log("Serato 핫큐 기록: %s  [%s]  %s" % (Path(path).name, fmt_cues(rc), "검증됨" if ok else "검증 실패"))
+                    if not ok:
+                        rep["warnings"].append("핫큐 검증 실패: " + Path(path).name)
+                report.append(rep)
             elif a == "delete_serato":
                 self.serato.remove_crate_to(S[it["key"]]["name"], bdir / "serato" / "deleted")
                 report.append(dict(key=it["key"], action=a, count=0, warnings=[], written=None))
@@ -620,7 +873,7 @@ class Model:
                 rp["verified"] = got == rp["written"]
             elif a == "to_serato":
                 got = _sig(S2[k]["paths"]) if k in S2 else None
-                rp["verified"] = got == rp["written"]
+                rp["verified"] = got == rp["written"] and all(c["verified"] for c in rp.get("cues", []))
             elif a == "delete_serato":
                 rp["verified"] = k not in S2
             else:
@@ -754,13 +1007,17 @@ UI_HTML = """<!doctype html>
 <style>
 :root{--bg:#0b0b0c;--line:#2a2a2d;--txt:#d6d6d6;--dim:#8a8a8f;--ok:#3fb950;--warn:#e3a008;--bad:#e5484d;--info:#4a9eff}
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font:12px/1.35 -apple-system,"Apple SD Gothic Neo","Malgun Gothic",Segoe UI,Helvetica,Arial,sans-serif;overflow:hidden}
+html,body{margin:0;height:100vh;background:var(--bg);color:var(--txt);font:12px/1.35 -apple-system,"Apple SD Gothic Neo","Malgun Gothic",Segoe UI,Helvetica,Arial,sans-serif;overflow:hidden}
 button,select{font:inherit;color:var(--txt);background:#26262a;border:1px solid #3a3a40;border-radius:4px;padding:4px 10px;cursor:pointer}
 button:hover:not(:disabled){background:#33333a}
 button:disabled{opacity:.4;cursor:default}
 button.primary{background:#1e5fa8;border-color:#2b78cc;color:#fff}
 button.primary:hover:not(:disabled){background:#2570c4}
-#app{display:grid;grid-template-rows:38px auto 1fr 230px;height:100%}
+#app{display:grid;grid-template-rows:38px auto minmax(260px,1fr) minmax(230px,40vh);height:100vh}
+#app>header{grid-row:1}#banner{grid-row:2}#app>main{grid-row:3}#app>.plan{grid-row:4}
+td.cue,th.cue{width:118px;font-variant-numeric:tabular-nums}
+td.cue{color:#e8b04a}
+td.cue.cd{box-shadow:inset 3px 0 0 var(--warn)}
 #banner{display:none;align-items:center;gap:10px;padding:7px 14px;background:#4a1717;color:#ffd9d9;border-bottom:1px solid #6b2323;font-weight:600}
 #banner.on{display:flex}
 .linkbtn{margin-top:10px;margin-right:6px}
@@ -771,7 +1028,7 @@ header .sp{flex:1}
 .pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim)}
 .dot{width:8px;height:8px;border-radius:50%;background:#555;display:inline-block;flex:none}
 .dot.same{background:var(--ok)}.dot.differs,.dot.both_changed{background:var(--bad)}
-.dot.serato_changed,.dot.rekordbox_changed,.dot.new_serato,.dot.new_rekordbox{background:var(--warn)}
+.dot.cues_differ,.dot.serato_changed,.dot.rekordbox_changed,.dot.new_serato,.dot.new_rekordbox{background:var(--warn)}
 .dot.deleted_in_serato,.dot.deleted_in_rekordbox,.dot.blocked{background:#777}
 .dot.run{background:var(--bad)}.dot.idle{background:var(--ok)}
 main{display:grid;grid-template-columns:1fr 54px 1fr;min-height:0}
@@ -791,7 +1048,7 @@ table{border-collapse:collapse;width:100%;table-layout:fixed}
 th{position:sticky;top:0;text-align:left;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.4px;padding:0 6px;height:22px;white-space:nowrap;overflow:hidden}
 td{padding:0 6px;height:22px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 td.n,th.n{width:34px;text-align:right}td.bpm,th.bpm{width:44px;text-align:right}td.key,th.key{width:46px}td.len,th.len{width:48px;text-align:right}
-td.ar,th.ar{width:26%}td.cm,th.cm{width:20%}
+td.ar,th.ar{width:18%}td.cm,th.cm{width:14%}
 tr.miss td{opacity:.5;text-decoration:line-through}
 /* ---- Serato look ---- */
 .serato{background:#111}
@@ -885,7 +1142,7 @@ const TOKEN="__TOKEN__", VERSION="__VERSION__";
 const I18N={
 ko:{refresh:"새로고침",settings:"설정",sync:"선택 항목 동기화",all:"변경 항목 모두 선택",none:"선택 해제",plan:"동기화 계획",log:"결과",
  pl:"플레이리스트",cs:"Serato",cr:"rekordbox",status:"상태",action:"동작",note:"설명",
- st:{same:"동일",differs:"서로 다름",serato_changed:"Serato 변경",rekordbox_changed:"rekordbox 변경",both_changed:"양쪽 변경",new_serato:"Serato에만 있음",new_rekordbox:"rekordbox에만 있음",deleted_in_serato:"Serato에서 삭제됨?",deleted_in_rekordbox:"rekordbox에서 삭제됨?",blocked:"동기화 불가"},
+ st:{same:"동일",differs:"서로 다름",serato_changed:"Serato 변경",rekordbox_changed:"rekordbox 변경",both_changed:"양쪽 변경",new_serato:"Serato에만 있음",new_rekordbox:"rekordbox에만 있음",deleted_in_serato:"Serato에서 삭제됨?",deleted_in_rekordbox:"rekordbox에서 삭제됨?",blocked:"동기화 불가",cues_differ:"핫큐 차이"},
  ac:{skip:"건너뜀",to_rekordbox:"Serato → rekordbox",to_serato:"rekordbox → Serato",delete_serato:"Serato에서 삭제",delete_rekordbox:"rekordbox에서 삭제"},
  run:"실행 중",idle:"종료됨",empty:"항목이 없습니다",selpl:"플레이리스트를 선택하세요",tracks:"곡",
  toR:"선택한 플레이리스트를 Serato → rekordbox 로 보냅니다",toS:"선택한 플레이리스트를 rekordbox → Serato 로 보냅니다",
@@ -897,7 +1154,7 @@ ko:{refresh:"새로고침",settings:"설정",sync:"선택 항목 동기화",all:
  busy:"를 종료해야 동기화할 수 있습니다. 종료하면 자동으로 다시 활성화됩니다.",backups:"백업 폴더 열기",about:"정보·라이선스",aboutT:"정보·오픈소스 라이선스",opened:"Finder에서 열었습니다: "},
 en:{refresh:"Refresh",settings:"Settings",sync:"Sync selected",all:"Select all changes",none:"Clear",plan:"Sync plan",log:"Result",
  pl:"Playlist",cs:"Serato",cr:"rekordbox",status:"Status",action:"Action",note:"Note",
- st:{same:"In sync",differs:"Differs",serato_changed:"Serato changed",rekordbox_changed:"rekordbox changed",both_changed:"Both changed",new_serato:"Only in Serato",new_rekordbox:"Only in rekordbox",deleted_in_serato:"Deleted in Serato?",deleted_in_rekordbox:"Deleted in rekordbox?",blocked:"Cannot sync"},
+ st:{same:"In sync",differs:"Differs",serato_changed:"Serato changed",rekordbox_changed:"rekordbox changed",both_changed:"Both changed",new_serato:"Only in Serato",new_rekordbox:"Only in rekordbox",deleted_in_serato:"Deleted in Serato?",deleted_in_rekordbox:"Deleted in rekordbox?",blocked:"Cannot sync",cues_differ:"Hot cues differ"},
  ac:{skip:"Skip",to_rekordbox:"Serato → rekordbox",to_serato:"rekordbox → Serato",delete_serato:"Delete in Serato",delete_rekordbox:"Delete in rekordbox"},
  run:"running",idle:"closed",empty:"Nothing here",selpl:"Select a playlist",tracks:"tracks",
  toR:"Send selected playlist Serato → rekordbox",toS:"Send selected playlist rekordbox → Serato",
@@ -966,10 +1223,10 @@ function renderGrid(side){
   const other=new Set((tracksCache[side==="s"?"r":"s"]).map(x=>x.k));
   if(!sel.key){el.innerHTML='<div class="msg">'+esc(T().selpl)+'</div>';return}
   const oth=tracksCache[side==="s"?"r":"s"];
-  let h='<table><thead><tr><th class="n">#</th><th>'+(side==="s"?"Song":"Track Title")+'</th><th class="ar">Artist</th><th class="bpm">BPM</th><th class="key">Key</th><th class="len">Time</th><th class="cm">Comment</th></tr></thead><tbody>';
+  let h='<table><thead><tr><th class="n">#</th><th>'+(side==="s"?"Song":"Track Title")+'</th><th class="ar">Artist</th><th class="bpm">BPM</th><th class="key">Key</th><th class="len">Time</th><th class="cue">Hot Cue</th><th class="cm">Comment</th></tr></thead><tbody>';
   rows.forEach((r,i)=>{
     const o=oth[i];const mm=oth.length&&(!o||o.k!==r.k);
-    h+='<tr class="'+(r.exists?"":"miss")+'" data-i="'+i+'"><td class="n'+(mm?" mm":"")+'">'+r.n+'</td><td class="ti" title="'+esc(r.path)+'">'+esc(r.title)+'</td><td class="ar">'+esc(r.artist)+'</td><td class="bpm">'+esc(r.bpm)+'</td><td class="key k" style="color:'+camCol(r.key)+'">'+esc(r.key)+'</td><td class="len">'+esc(r.length)+'</td><td class="cm">'+esc(r.comment)+'</td></tr>';
+    h+='<tr class="'+(r.exists?"":"miss")+'" data-i="'+i+'"><td class="n'+(mm?" mm":"")+'">'+r.n+'</td><td class="ti" title="'+esc(r.path)+'">'+esc(r.title)+'</td><td class="ar">'+esc(r.artist)+'</td><td class="bpm">'+esc(r.bpm)+'</td><td class="key k" style="color:'+camCol(r.key)+'">'+esc(r.key)+'</td><td class="len">'+esc(r.length)+'</td><td class="cue'+(o&&o.k===r.k&&side==="s"&&r.cues!==""&&o.cues!=="-"&&r.cues!==o.cues?" cd":"")+'" title="'+esc(r.cues)+'">'+esc(r.cues)+'</td><td class="cm">'+esc(r.comment)+'</td></tr>';
   });
   el.innerHTML=h+"</tbody></table>";
   el.querySelectorAll("tbody tr").forEach(tr=>tr.onclick=()=>{el.querySelectorAll("tr.sel").forEach(x=>x.classList.remove("sel"));tr.classList.add("sel")});
@@ -1131,7 +1388,15 @@ def _ser_row(i, p, m):
         bpm = ""
     return dict(n=i, title=m.get("title") or Path(p).stem, artist=m.get("artist", ""), bpm=bpm,
                 key=to_camelot(m.get("key", "")), length=m.get("length", ""), comment=m.get("comment", ""),
-                k=pkey(p), path=p, exists=os.path.isfile(p))
+                k=pkey(p), path=p, exists=os.path.isfile(p), cues=_ser_cue_text(p))
+
+
+def _ser_cue_text(p):
+    try:
+        c = serato_cues(p)
+    except SyncError:
+        return ""
+    return "" if c is None else (fmt_cues(c) or "-")
 
 
 def _rb_row(i, r):
@@ -1141,7 +1406,7 @@ def _rb_row(i, r):
         bpm = ""
     return dict(n=i, title=r["title"] or Path(r["path"]).stem, artist=r["artist"], bpm=bpm, key=to_camelot(r["key"]),
                 length=fmt_len(r["length"]), comment=r["comment"], k=pkey(r["path"]), path=r["path"],
-                exists=os.path.isfile(r["path"]))
+                exists=os.path.isfile(r["path"]), cues=fmt_cues(r.get("cues") or {}) or "-")
 
 
 CONFIG_FILE = DATA_DIR / "config.json"
@@ -1372,7 +1637,7 @@ def run_app(app):
         print("pywebview not installed -> opening in the browser")
         return run_server(app, 0, True)
     srv, url = _start_server(app)
-    webview.create_window(APP_NAME, url, width=1500, height=920, min_size=(1100, 700), background_color="#0b0b0c")
+    webview.create_window("%s v%s" % (APP_NAME, VERSION), url, width=1500, height=920, min_size=(1100, 700), background_color="#0b0b0c")
     try:
         webview.start()
     finally:
@@ -1413,6 +1678,10 @@ def selftest(app):
         print("pyrekordbox: OK")
     except SyncError as e:
         print("pyrekordbox: MISSING ->", e); ok = False
+    try:
+        _mutagen(); print("mutagen: OK")
+    except SyncError as e:
+        print("mutagen: MISSING ->", e); ok = False
     if M.serato.available():
         S = M.serato_nodes()[1]
         print("Serato crates:", len(S), "| library tracks:", len(M.serato.read_library()))
